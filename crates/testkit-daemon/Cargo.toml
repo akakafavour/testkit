@@ -1,0 +1,20 @@
+[package]
+name = "testkit-daemon"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.77"
+license = "MIT"
+description = "Ambient background watcher for TestKit projects"
+publish = false
+
+[[bin]]
+name = "testkitd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal", "net", "fs", "io-util"] }

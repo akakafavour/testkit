@@ -1,0 +1,49 @@
+# TestKit workspace root.
+#
+# TestKit is the agent's testing toolkit and operating manual; the agent is the
+# operator. This workspace builds three artifacts:
+#
+#   crates/testkit-core    -> library: scenarios, virtual clock, resource
+#                             envelope, receipts, two-tier brain
+#   crates/testkit-cli     -> binary "testkit": init | verify | gate | receipt
+#   crates/testkit-daemon  -> binary "testkitd": staleness + semantic map
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/testkit-cli",
+    "crates/testkit-core",
+    "crates/testkit-daemon",
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.77"
+license = "MIT"
+authors = ["TestKit Team"]
+description = "Full Lifecycle AI Software Intelligence: mechanical grounding, invariants, telemetry, and verified receipts"
+keywords = ["testing", "verification", "invariants", "agents", "receipts"]
+categories = ["development-tools::testing", "command-line-utilities"]
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+sysinfo = "0.33"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal", "net", "fs", "io-util"] }
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+dirs = "5"
+
+# Release profile for the distributed binaries. Thin LTO keeps the build
+# tractable on a single-vCPU CI runner while still producing a compact binary.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

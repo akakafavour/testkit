@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/v1/plugin.schema.json",
+  "name": "testkit",
+  "version": "1.0.0",
+  "description": "Full Lifecycle AI Software Intelligence: Mechanical grounding, invariants, telemetry, and verified receipts",
+  "skills": [
+    "./skills/architect",
+    "./skills/verify",
+    "./skills/triage",
+    "./skills/replay",
+    "./skills/ship-gate"
+  ],
+  "agents": [
+    "./agents/testkit-architect.md",
+    "./agents/testkit-tester.md",
+    "./agents/testkit-security.md",
+    "./agents/testkit-orchestrator.md"
+  ],
+  "hooks": "./hooks/hooks.json"
+}

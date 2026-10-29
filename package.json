@@ -1,0 +1,33 @@
+{
+  "name": "testkit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Full Lifecycle AI Software Intelligence: mechanical grounding, invariants, telemetry, and verified receipts for AI-written software",
+  "keywords": [
+    "testkit",
+    "testing",
+    "verification",
+    "invariants",
+    "receipts",
+    "telemetry",
+    "ai-agents",
+    "agent-plugins",
+    "rust",
+    "cli"
+  ],
+  "author": "TestKit Team",
+  "license": "MIT",
+  "scripts": {
+    "build": "cargo build --release",
+    "build:cli": "cargo build --release -p testkit-cli",
+    "build:daemon": "cargo build --release -p testkit-daemon",
+    "install:local": "cargo install --path crates/testkit-cli && cargo install --path crates/testkit-daemon"
+  },
+  "bin": {
+    "testkit": "./target/release/testkit",
+    "testkitd": "./target/release/testkitd"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

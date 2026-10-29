@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "testkit gate --quiet",
+            "description": "Advisory-and-blocking enforcement point: blocks git commits and shell escapes when unresolved P0/HIGH receipts exist. Hooks advise the operator but block the agent."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "testkit --once-remap --quiet",
+            "description": "Advisory-and-blocking enforcement point: mark affected scenarios stale and refresh the semantic map after every write directly via CLI (zero background daemon required). Hooks advise the operator but block the agent."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "testkit gate --warn-only --quiet",
+            "description": "Advisory-and-blocking enforcement point: warn when P0/HIGH receipts remain unresolved before session exit. Hooks advise the operator but block the agent."
+          }
+        ]
+      }
+    ]
+  }
+}
