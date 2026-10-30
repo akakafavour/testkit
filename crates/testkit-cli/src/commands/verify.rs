@@ -24,7 +24,6 @@ use testkit_core::time_travel::{parse_jump_spec, VirtualClock};
 use testkit_core::EvidenceStore;
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(50);
-const MAX_SAMPLES: usize = 120;
 const HARD_TIMEOUT: Duration = Duration::from_secs(300);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const TRACE_BODY_LIMIT: usize = 4_000;
@@ -175,15 +174,35 @@ struct LoadFailure {
 // Entry point
 // ---------------------------------------------------------------------------
 
-/// Verify every scenario (or the one matching `scenario_filter`), writing
-/// evidence and receipts. Exits with code 2 when the project is not
-/// initialized and code 1 when any receipt is failed or blocked.
-pub fn run(path: Option<PathBuf>, scenario_filter: Option<String>, fail_fast: bool) -> Result<()> {
+/// Verify scenarios matching the optional id/tag filters, writing evidence and
+/// receipts. Exits with code 2 when the project is not initialized and code 1
+/// when any receipt is failed or blocked.
+///
+/// `max_cpu_percent` / `max_rss_mb` override the resource envelope for this
+/// run; passing neither uses the default $12-server envelope.
+pub fn run(
+    path: Option<PathBuf>,
+    scenario_filter: Option<String>,
+    tag_filter: Option<String>,
+    max_cpu_percent: Option<f32>,
+    max_rss_mb: Option<u64>,
+    fail_fast: bool,
+) -> Result<()> {
     let root = resolve_root(path);
     if !root.join(".testkit").is_dir() {
         eprintln!("TestKit not initialized here. Run `testkit init` first.");
         std::process::exit(2);
     }
+
+    let envelope = if max_cpu_percent.is_none() && max_rss_mb.is_none() {
+        ResourceEnvelope::twelve_dollar_server()
+    } else {
+        let defaults = ResourceEnvelope::default();
+        ResourceEnvelope::custom(
+            max_cpu_percent.unwrap_or(defaults.max_cpu_percent),
+            max_rss_mb.unwrap_or(defaults.max_rss_mb),
+        )
+    };
 
     let store = EvidenceStore::new(&root);
     store
@@ -207,12 +226,17 @@ pub fn run(path: Option<PathBuf>, scenario_filter: Option<String>, fail_fast: bo
         &receipts_dir,
         &files,
         scenario_filter.as_deref(),
+        tag_filter.as_deref(),
+        envelope,
         fail_fast,
     )?;
 
     if report.matched == 0 {
         if let Some(filter) = scenario_filter.as_deref() {
             eprintln!("No scenarios matched id '{filter}'.");
+        }
+        if let Some(tag) = tag_filter.as_deref() {
+            eprintln!("No scenarios matched invariant tag '{tag}'.");
         }
         return Ok(());
     }
@@ -238,6 +262,8 @@ fn verify_scenarios(
     receipts_dir: &Path,
     files: &[PathBuf],
     filter: Option<&str>,
+    tag_filter: Option<&str>,
+    envelope: ResourceEnvelope,
     fail_fast: bool,
 ) -> Result<VerificationReport> {
     let mut tally = Tally::default();
@@ -249,8 +275,11 @@ fn verify_scenarios(
                 if filter.is_some_and(|id| id != scenario.id.as_str()) {
                     continue;
                 }
+                if tag_filter.is_some_and(|tag| !scenario.invariant.contains(tag)) {
+                    continue;
+                }
                 matched += 1;
-                let verdict = verify_scenario(root, store, receipts_dir, &scenario)?;
+                let verdict = verify_scenario(root, store, receipts_dir, &scenario, envelope)?;
                 print_verdict(
                     verdict.status,
                     &scenario.id,
@@ -284,13 +313,14 @@ fn verify_scenario(
     store: &EvidenceStore,
     receipts_dir: &Path,
     scenario: &Scenario,
+    envelope: ResourceEnvelope,
 ) -> Result<Verdict> {
     let stem = evidence_stem(&scenario.id);
     let fake_now = compute_fake_now(scenario.time_jump.as_deref());
-    let execution = execute_scenario(root, scenario, &fake_now);
+    let execution = execute_scenario(root, scenario, &fake_now, envelope);
 
     record_evidence(store, scenario, &stem, &execution)?;
-    let evaluation = evaluate_scenario(scenario, &execution, &stem);
+    let evaluation = evaluate_scenario(scenario, &execution, &stem, envelope);
     let evidence_hash = store
         .hash_tree()
         .context("hashing the evidence bundle")?;
@@ -309,14 +339,19 @@ fn verify_scenario(
     })
 }
 
-fn execute_scenario(root: &Path, scenario: &Scenario, fake_now: &str) -> Execution {
+fn execute_scenario(
+    root: &Path,
+    scenario: &Scenario,
+    fake_now: &str,
+    envelope: ResourceEnvelope,
+) -> Execution {
     match scenario.kind {
         ScenarioKind::Process => match &scenario.process {
-            Some(spec) => execute_process(root, spec, fake_now),
+            Some(spec) => execute_process(root, spec, fake_now, envelope),
             None => Execution::blocked("scenario has kind 'process' but no process block", fake_now),
         },
         ScenarioKind::Http => match &scenario.http {
-            Some(spec) => execute_http(spec, fake_now),
+            Some(spec) => execute_http(spec, fake_now, envelope),
             None => Execution::blocked("scenario has kind 'http' but no http block", fake_now),
         },
     }
@@ -338,7 +373,7 @@ fn compute_fake_now(jump: Option<&str>) -> String {
 // Process execution
 // ---------------------------------------------------------------------------
 
-fn execute_process(root: &Path, spec: &ProcessSpec, fake_now: &str) -> Execution {
+fn execute_process(root: &Path, spec: &ProcessSpec, fake_now: &str, envelope: ResourceEnvelope) -> Execution {
     let started = Instant::now();
     let child = match spawn_process(spec, root, fake_now) {
         Ok(child) => child,
@@ -367,7 +402,7 @@ fn execute_process(root: &Path, spec: &ProcessSpec, fake_now: &str) -> Execution
         let _ = tx.send(message);
     });
 
-    let watcher = TelemetryWatcher::new(pid, ResourceEnvelope::twelve_dollar_server());
+    let watcher = TelemetryWatcher::new(pid, envelope);
     let (outcome, telemetry) = await_worker(rx, watcher);
 
     Execution {
@@ -403,7 +438,7 @@ fn spawn_process(spec: &ProcessSpec, root: &Path, fake_now: &str) -> io::Result<
 // HTTP execution
 // ---------------------------------------------------------------------------
 
-fn execute_http(spec: &HttpSpec, fake_now: &str) -> Execution {
+fn execute_http(spec: &HttpSpec, fake_now: &str, envelope: ResourceEnvelope) -> Execution {
     let started = Instant::now();
     let (tx, rx) = mpsc::channel::<WorkerMessage>();
     let spec = spec.clone();
@@ -416,7 +451,7 @@ fn execute_http(spec: &HttpSpec, fake_now: &str) -> Execution {
 
     // An HTTP probe has no child process, so the CLI samples itself. That is a
     // host-level proxy for memory health, not the target server's footprint.
-    let watcher = TelemetryWatcher::new(std::process::id(), ResourceEnvelope::twelve_dollar_server());
+    let watcher = TelemetryWatcher::new(std::process::id(), envelope);
     let (outcome, telemetry) = await_worker(rx, watcher);
 
     Execution {
@@ -480,13 +515,12 @@ fn await_worker(
     mut watcher: TelemetryWatcher,
 ) -> (WorkerMessage, TelemetryReport) {
     let deadline = Instant::now() + HARD_TIMEOUT;
-    let mut samples_taken = 0usize;
 
     let message = loop {
-        if samples_taken < MAX_SAMPLES {
-            let _ = watcher.sample_now();
-            samples_taken += 1;
-        }
+        // Sample for the whole run: a leak that creeps in at minute two must
+        // still reach the receipt. The watcher bounds what it retains by
+        // decimating, so memory stays flat no matter how long the run takes.
+        let _ = watcher.sample_now();
 
         match receiver.recv_timeout(SAMPLE_INTERVAL) {
             Ok(message) => break message,
@@ -630,8 +664,13 @@ fn record_evidence(
 // Evaluation
 // ---------------------------------------------------------------------------
 
-fn evaluate_scenario(scenario: &Scenario, execution: &Execution, stem: &str) -> Evaluation {
-    let mut violations = hardware_violations(&execution.telemetry, stem);
+fn evaluate_scenario(
+    scenario: &Scenario,
+    execution: &Execution,
+    stem: &str,
+    envelope: ResourceEnvelope,
+) -> Evaluation {
+    let mut violations = hardware_violations(&execution.telemetry, stem, envelope);
 
     match &execution.outcome {
         Ok(Outcome::Process(observation)) => match &scenario.process {
@@ -743,9 +782,12 @@ fn evaluate_http(spec: &HttpSpec, observation: &HttpObservation) -> (bool, Strin
     }
 }
 
-fn hardware_violations(telemetry: &TelemetryReport, stem: &str) -> Vec<Violation> {
+fn hardware_violations(
+    telemetry: &TelemetryReport,
+    stem: &str,
+    envelope: ResourceEnvelope,
+) -> Vec<Violation> {
     let mut violations = Vec::new();
-    let envelope = ResourceEnvelope::twelve_dollar_server();
     let evidence_ref = Some(format!("telemetry/{stem}.json"));
 
     if telemetry.peak_ram_mb > envelope.max_rss_mb {

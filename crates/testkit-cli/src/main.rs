@@ -52,6 +52,18 @@ enum Commands {
         #[arg(long, value_name = "id")]
         scenario: Option<String>,
 
+        /// Run only scenarios whose invariant tag contains this string
+        #[arg(long, value_name = "tag")]
+        tag: Option<String>,
+
+        /// Override the CPU envelope ceiling (percent) for this run
+        #[arg(long, value_name = "percent")]
+        max_cpu: Option<f32>,
+
+        /// Override the RAM envelope ceiling (MiB) for this run
+        #[arg(long, value_name = "mb")]
+        max_rss_mb: Option<u64>,
+
         /// Stop at the first failing scenario
         #[arg(long)]
         fail_fast: bool,
@@ -93,6 +105,13 @@ enum ReceiptCommands {
         path: Option<PathBuf>,
     },
 
+    /// Show the most recent receipt in the ledger
+    Latest {
+        /// Project directory (defaults to the current directory)
+        #[arg(long, value_name = "dir")]
+        path: Option<PathBuf>,
+    },
+
     /// Verify one receipt file's signature
     Verify {
         /// Path to a run_XXXX.json receipt
@@ -119,8 +138,11 @@ fn run() -> Result<()> {
         Commands::Verify {
             path,
             scenario,
+            tag,
+            max_cpu,
+            max_rss_mb,
             fail_fast,
-        } => commands::verify::run(path, scenario, fail_fast),
+        } => commands::verify::run(path, scenario, tag, max_cpu, max_rss_mb, fail_fast),
         Commands::Gate {
             path,
             json,
@@ -129,6 +151,7 @@ fn run() -> Result<()> {
         } => commands::gate::run(path, json, quiet, warn_only),
         Commands::Receipt { command } => match command {
             ReceiptCommands::List { path } => commands::receipt::list(path),
+            ReceiptCommands::Latest { path } => commands::receipt::latest(path),
             ReceiptCommands::Verify { file } => commands::receipt::verify_file(file),
         },
     }
@@ -159,13 +182,58 @@ mod tests {
             Commands::Verify {
                 path,
                 scenario,
+                tag,
+                max_cpu,
+                max_rss_mb,
                 fail_fast,
             } => {
                 assert_eq!(path, None);
                 assert_eq!(scenario, None);
+                assert_eq!(tag, None);
+                assert_eq!(max_cpu, None);
+                assert_eq!(max_rss_mb, None);
                 assert!(fail_fast);
             }
             other => panic!("expected verify, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verify_accepts_tag_and_envelope_overrides() {
+        let cli = Cli::try_parse_from([
+            "testkit",
+            "verify",
+            "--tag",
+            "INV-012",
+            "--max-cpu",
+            "80",
+            "--max-rss-mb",
+            "256",
+        ])
+        .expect("verify with tag and envelope overrides");
+        match cli.command {
+            Commands::Verify {
+                tag,
+                max_cpu,
+                max_rss_mb,
+                ..
+            } => {
+                assert_eq!(tag.as_deref(), Some("INV-012"));
+                assert_eq!(max_cpu, Some(80.0));
+                assert_eq!(max_rss_mb, Some(256));
+            }
+            other => panic!("expected verify, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn receipt_latest_takes_an_optional_path() {
+        let cli = Cli::try_parse_from(["testkit", "receipt", "latest"]).expect("receipt latest");
+        match cli.command {
+            Commands::Receipt {
+                command: ReceiptCommands::Latest { path },
+            } => assert_eq!(path, None),
+            other => panic!("expected receipt latest, got {other:?}"),
         }
     }
 

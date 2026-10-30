@@ -89,6 +89,31 @@ pub fn list(path: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// Show the most recent receipt in the ledger and verify its signature.
+///
+/// Receipt file names sort chronologically (`run_receipt-YYYY-MM-DD-NNNN.json`),
+/// so the lexicographically last file is the newest. Delegates to
+/// [`verify_file`], which terminates with `exit(1)` when the signature does
+/// not match.
+pub fn latest(path: Option<PathBuf>) -> Result<()> {
+    let root = resolve_root(path);
+    let dir = root.join(".testkit").join("receipts");
+
+    let mut files = collect_receipt_files(&dir);
+    files.sort();
+
+    let file = match files.pop() {
+        Some(file) => file,
+        None => {
+            println!("No receipts found.");
+            return Ok(());
+        }
+    };
+
+    println!("Latest receipt: {}", file.display());
+    verify_file(file)
+}
+
 /// Verify a single receipt file and print its details or the mismatch.
 ///
 /// Returns `Ok(())` for a valid receipt; terminates with `exit(1)` when the

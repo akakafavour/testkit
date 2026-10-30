@@ -1,7 +1,9 @@
 //! Process telemetry and runaway detection for hard-capped runs.
 //!
-//! A [`TelemetryWatcher`] samples one OS process and keeps a bounded history
-//! of CPU and resident-memory readings. [`TelemetryWatcher::detect_runaway`]
+//! A [`TelemetryWatcher`] samples one OS process for the entire lifetime of a
+//! run: the running CPU/RAM peaks never decay, and the retained sample
+//! history decimates instead of forgetting its head, so a leak that creeps in
+//! minutes into a run still reaches the receipt. [`TelemetryWatcher::detect_runaway`]
 //! turns that history into a human-readable [`RunawayFinding`] so the harness
 //! can kill a process that is busy-looping or leaking before it takes the
 //! host down.
@@ -12,8 +14,10 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
-/// Number of samples retained in memory (about two minutes at one sample per
-/// second).
+/// Number of samples retained in memory before decimation kicks in. The
+/// retained history always covers the whole run: when the cap is reached every
+/// second sample is dropped, doubling the stored interval instead of
+/// forgetting the run's head.
 pub const HISTORY_CAPACITY: usize = 120;
 
 /// A sustained CPU excursion must cover at least this many milliseconds before
@@ -112,6 +116,12 @@ pub struct TelemetryWatcher {
     pid: Pid,
     envelope: ResourceEnvelope,
     history: VecDeque<TelemetrySample>,
+    /// Highest CPU percent observed since the watcher started, including
+    /// samples already decimated out of `history`.
+    peak_cpu_percent: f32,
+    /// Highest RSS (MiB) observed since the watcher started, including
+    /// samples already decimated out of `history`.
+    peak_rss_mb: u64,
 }
 
 impl TelemetryWatcher {
@@ -132,6 +142,8 @@ impl TelemetryWatcher {
             pid,
             envelope,
             history: VecDeque::with_capacity(HISTORY_CAPACITY),
+            peak_cpu_percent: 0.0,
+            peak_rss_mb: 0,
         }
     }
 
@@ -151,14 +163,28 @@ impl TelemetryWatcher {
             cpu_percent,
             rss_mb,
         };
+        self.peak_cpu_percent = self.peak_cpu_percent.max(cpu_percent);
+        self.peak_rss_mb = self.peak_rss_mb.max(rss_mb);
         if self.history.len() == HISTORY_CAPACITY {
-            self.history.pop_front();
+            // Keep the whole run represented: drop every second retained
+            // sample so the stored interval doubles rather than the history
+            // forgetting its beginning.
+            let decimated: VecDeque<TelemetrySample> = self
+                .history
+                .iter()
+                .enumerate()
+                .filter(|&(index, _)| index % 2 == 1)
+                .map(|(_, sample)| sample.clone())
+                .collect();
+            self.history = decimated;
         }
         self.history.push_back(sample.clone());
         sample
     }
 
-    /// Read-only view of the retained history, oldest first.
+    /// Read-only view of the retained history, oldest first. The history is
+    /// decimated once it passes [`HISTORY_CAPACITY`], so it always spans the
+    /// whole run at a coarser interval rather than only its recent tail.
     pub fn samples(&self) -> &VecDeque<TelemetrySample> {
         &self.history
     }
@@ -168,16 +194,10 @@ impl TelemetryWatcher {
         &self.envelope
     }
 
-    /// Highest CPU percent and highest RSS (MiB) seen so far.
+    /// Highest CPU percent and highest RSS (MiB) observed over the entire
+    /// watch, including samples already decimated out of the retained history.
     pub fn peak(&self) -> (f32, u64) {
-        self.history
-            .iter()
-            .fold((0.0_f32, 0_u64), |(cpu_peak, rss_peak), sample| {
-                (
-                    cpu_peak.max(sample.cpu_percent),
-                    rss_peak.max(sample.rss_mb),
-                )
-            })
+        (self.peak_cpu_percent, self.peak_rss_mb)
     }
 
     /// Classifies the retained history, preferring CPU runaways when both
@@ -267,5 +287,40 @@ impl TelemetryWatcher {
                 self.envelope.max_rss_mb,
             ),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn peaks_cover_the_whole_run_even_after_decimation() {
+        let mut watcher = TelemetryWatcher::new(std::process::id(), ResourceEnvelope::default());
+        let mut max_rss = 0u64;
+        let mut max_cpu = 0.0_f32;
+        for _ in 0..(HISTORY_CAPACITY + 10) {
+            let sample = watcher.sample_now();
+            max_rss = max_rss.max(sample.rss_mb);
+            max_cpu = max_cpu.max(sample.cpu_percent);
+        }
+
+        let (peak_cpu, peak_rss) = watcher.peak();
+        assert_eq!(peak_rss, max_rss, "peak RSS must include evicted samples");
+        assert_eq!(peak_cpu, max_cpu, "peak CPU must include evicted samples");
+        assert!(watcher.samples().len() <= HISTORY_CAPACITY);
+        // The live test process always has a nonzero resident footprint.
+        assert!(max_rss > 0);
+    }
+
+    #[test]
+    fn envelope_presets_match_their_documented_budgets() {
+        let edge = ResourceEnvelope::edge_serverless();
+        assert_eq!(edge.max_cpu_percent, 50.0);
+        assert_eq!(edge.max_rss_mb, 128);
+
+        let high = ResourceEnvelope::high_throughput();
+        assert_eq!(high.max_cpu_percent, 400.0);
+        assert_eq!(high.max_rss_mb, 8192);
     }
 }
