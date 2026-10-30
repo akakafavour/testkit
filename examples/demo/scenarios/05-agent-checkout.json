@@ -1,0 +1,17 @@
+{
+  "id": "agent-checkout-flow-notarized",
+  "invariant": "INV-TRIAL-003",
+  "kind": "agent",
+  "severity": "HIGH",
+  "description": "The operator agent drove the checkout flow and left notarizable evidence.",
+  "agent": {
+    "brief": "Perform the checkout flow end to end with your own tools (browser automation, HTTP calls, or the platform's UI driver). Complete one full purchase for a trial user, then write a plain-text transcript of every step and response to .testkit/scratch/checkout-transcript.md. The transcript must show the order confirmation. TestKit injects TESTKIT_FAKE_NOW / X-Testkit-Fake-Now into everything it drives; honor it if your flow touches time.",
+    "evidence": [
+      {
+        "path": ".testkit/scratch/checkout-transcript.md",
+        "must_contain": ["ORDER CONFIRMED", "trial"],
+        "min_bytes": 200
+      }
+    ]
+  }
+}

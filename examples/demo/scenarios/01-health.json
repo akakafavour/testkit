@@ -1,0 +1,15 @@
+{
+  "id": "health-endpoint-serves-ok",
+  "invariant": "INV-TRIAL-001",
+  "kind": "http",
+  "severity": "P0",
+  "description": "Health endpoint answers 200 quickly and never leaks internal error strings.",
+  "http": {
+    "method": "GET",
+    "url": "http://127.0.0.1:8931/api/health",
+    "expected_status": [200],
+    "expected_body_contains": ["\"ok\":true"],
+    "expected_body_not_contains": ["stack", "panic", "at Object"],
+    "max_duration_ms": 2000
+  }
+}

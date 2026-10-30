@@ -38,6 +38,7 @@ const LOG_BODY_LIMIT: usize = 100_000;
 enum ScenarioKind {
     Process,
     Http,
+    Agent,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -51,6 +52,7 @@ struct Scenario {
     #[serde(default)] time_jump: Option<String>,
     #[serde(default)] process: Option<ProcessSpec>,
     #[serde(default)] http: Option<HttpSpec>,
+    #[serde(default)] agent: Option<AgentSpec>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -75,6 +77,33 @@ struct HttpSpec {
     #[serde(default)] body: Option<String>,
     #[serde(default)] expected_status: Vec<u16>,
     #[serde(default)] expected_body_contains: Vec<String>,
+    #[serde(default)] expected_body_not_contains: Vec<String>,
+    #[serde(default)] max_duration_ms: Option<u64>,
+}
+
+/// Evidence the operator agent must have produced before `verify` runs. The
+/// agent performs the flow (UI, database, file system) with its own tools and
+/// writes the declared artifacts; the engine then notarizes them into the
+/// receipt without ever driving the app itself.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct AgentSpec {
+    /// What the operator agent must do and prove, addressed to the agent.
+    #[serde(default)] brief: String,
+    /// Files the agent must have written before this scenario is verified.
+    #[serde(default)] evidence: Vec<AgentEvidence>,
+}
+
+/// One expected artifact of an agent-driven flow, relative to the project root.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct AgentEvidence {
+    /// Project-relative path of the artifact (transcript, screenshot, query dump).
+    path: String,
+    /// Substrings that must appear in the artifact (lossy-decoded for binaries).
+    #[serde(default)] must_contain: Vec<String>,
+    /// Smallest acceptable artifact size in bytes; guards against empty stubs.
+    #[serde(default)] min_bytes: Option<u64>,
 }
 
 fn default_http_method() -> String {
@@ -88,6 +117,23 @@ fn default_http_method() -> String {
 enum Outcome {
     Process(ProcessObservation),
     Http(HttpObservation),
+    Agent(AgentObservation),
+}
+
+/// The notarized result of one declared agent evidence artifact.
+struct AgentEvidenceResult {
+    /// Scenario-declared path, relative to the project root.
+    path: String,
+    found: bool,
+    bytes: u64,
+    /// First must_contain marker absent from the artifact, when any.
+    missing_marker: Option<String>,
+    /// Raw contents read at verification time; None when the file is missing.
+    contents: Option<Vec<u8>>,
+}
+
+struct AgentObservation {
+    results: Vec<AgentEvidenceResult>,
 }
 
 struct ProcessObservation {
@@ -179,13 +225,15 @@ struct LoadFailure {
 /// when any receipt is failed or blocked.
 ///
 /// `max_cpu_percent` / `max_rss_mb` override the resource envelope for this
-/// run; passing neither uses the default $12-server envelope.
+/// run; passing neither uses the default $12-server envelope. `limit` caps how
+/// many scenario files are considered, for incremental ramping (10 → 100 → 1k).
 pub fn run(
     path: Option<PathBuf>,
     scenario_filter: Option<String>,
     tag_filter: Option<String>,
     max_cpu_percent: Option<f32>,
     max_rss_mb: Option<u64>,
+    limit: Option<usize>,
     fail_fast: bool,
 ) -> Result<()> {
     let root = resolve_root(path);
@@ -214,17 +262,21 @@ pub fn run(
         .with_context(|| format!("creating receipt directory {}", receipts_dir.display()))?;
 
     let scenarios_dir = root.join(".testkit").join("scenarios");
-    let files = collect_scenario_files(&scenarios_dir)?;
-    if files.is_empty() {
+    let all_files = collect_scenario_files(&scenarios_dir)?;
+    if all_files.is_empty() {
         println!("No scenarios found in {}.", scenarios_dir.display());
         return Ok(());
     }
+    let files: &[PathBuf] = match limit {
+        Some(limit) => &all_files[..limit.min(all_files.len())],
+        None => &all_files,
+    };
 
     let report = verify_scenarios(
         &root,
         &store,
         &receipts_dir,
-        &files,
+        files,
         scenario_filter.as_deref(),
         tag_filter.as_deref(),
         envelope,
@@ -353,6 +405,10 @@ fn execute_scenario(
         ScenarioKind::Http => match &scenario.http {
             Some(spec) => execute_http(spec, fake_now, envelope),
             None => Execution::blocked("scenario has kind 'http' but no http block", fake_now),
+        },
+        ScenarioKind::Agent => match &scenario.agent {
+            Some(spec) => execute_agent(root, spec, fake_now),
+            None => Execution::blocked("scenario has kind 'agent' but no agent block", fake_now),
         },
     }
 }
@@ -507,6 +563,51 @@ fn perform_http(spec: &HttpSpec, fake_now: &str) -> WorkerMessage {
 }
 
 // ---------------------------------------------------------------------------
+// Agent evidence notarization
+// ---------------------------------------------------------------------------
+
+/// An `agent` scenario does not drive anything: it observes artifacts the
+/// operator agent has already written into the workspace and collects them for
+/// notarization. Missing artifacts block the receipt rather than failing it —
+/// they mean the flow was never performed, not that the app misbehaved.
+fn execute_agent(root: &Path, spec: &AgentSpec, fake_now: &str) -> Execution {
+    let started = Instant::now();
+    let results = spec
+        .evidence
+        .iter()
+        .map(|entry| {
+            let contents = match fs::read(root.join(&entry.path)) {
+                Ok(contents) => Some(contents),
+                Err(_) => None,
+            };
+            let bytes = contents.as_ref().map_or(0, |blob| blob.len() as u64);
+            let missing_marker = contents.as_ref().and_then(|blob| {
+                let text = String::from_utf8_lossy(blob);
+                entry
+                    .must_contain
+                    .iter()
+                    .find(|needle| !text.contains(needle.as_str()))
+                    .cloned()
+            });
+            AgentEvidenceResult {
+                path: entry.path.clone(),
+                found: contents.is_some(),
+                bytes,
+                missing_marker,
+                contents,
+            }
+        })
+        .collect();
+
+    Execution {
+        outcome: Ok(Outcome::Agent(AgentObservation { results })),
+        telemetry: TelemetryReport::default(),
+        duration_ms: millis(started.elapsed()),
+        fake_now: fake_now.to_string(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Telemetry
 // ---------------------------------------------------------------------------
 
@@ -622,10 +723,46 @@ fn record_evidence(
             )
             .context("writing the response log")?;
         }
+        Ok(Outcome::Agent(observation)) => {
+            // Copy each artifact into the evidence store so the receipt's
+            // evidence hash covers exactly what was verified.
+            for result in &observation.results {
+                if let Some(contents) = &result.contents {
+                    let file_name = Path::new(&result.path)
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "artifact.bin".to_string());
+                    store
+                        .write_bytes(&format!("agent/{stem}"), &file_name, contents)
+                        .context("copying agent evidence into the store")?;
+                }
+            }
+            let spec = scenario.agent.as_ref();
+            let trace = json!({
+                "scenario": &scenario.id,
+                "description": &scenario.description,
+                "kind": "agent",
+                "brief": spec.map(|spec| spec.brief.as_str()).unwrap_or(""),
+                "evidence": observation
+                    .results
+                    .iter()
+                    .map(|result| json!({
+                        "path": &result.path,
+                        "found": result.found,
+                        "bytes": result.bytes,
+                        "missing_marker": &result.missing_marker,
+                    }))
+                    .collect::<Vec<_>>(),
+                "fake_now": fake_now,
+            });
+            store.write_json("traces", &format!("{stem}.json"), &trace)
+                .context("writing the agent trace")?;
+        }
         Err(reason) => {
             let log_name = match scenario.kind {
                 ScenarioKind::Process => format!("{stem}.stderr.log"),
                 ScenarioKind::Http => format!("{stem}.response.log"),
+                ScenarioKind::Agent => format!("{stem}.agent.log"),
             };
             store.write_text("logs", &log_name, &format!("execution error: {reason}\n"))
                 .context("writing the failure log")?;
@@ -637,6 +774,7 @@ fn record_evidence(
                 "kind": match scenario.kind {
                     ScenarioKind::Process => "process",
                     ScenarioKind::Http => "http",
+                    ScenarioKind::Agent => "agent",
                 },
                 "program": process.map(|spec| spec.program.as_str()),
                 "args": process.map(|spec| spec.args.clone()),
@@ -690,6 +828,29 @@ fn evaluate_scenario(
             }
             None => blocked_evaluation(
                 "http output arrived without an http block".to_string(),
+                violations,
+            ),
+        },
+        Ok(Outcome::Agent(observation)) => match &scenario.agent {
+            Some(spec) => {
+                if observation.results.iter().any(|result| !result.found) {
+                    let missing = observation
+                        .results
+                        .iter()
+                        .filter(|result| !result.found)
+                        .map(|result| result.path.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return blocked_evaluation(
+                        format!("agent evidence missing: {missing}"),
+                        violations,
+                    );
+                }
+                let (passed, detail) = evaluate_agent(spec, observation);
+                finish_evaluation(passed, detail, violations)
+            }
+            None => blocked_evaluation(
+                "agent results arrived without an agent block".to_string(),
                 violations,
             ),
         },
@@ -767,6 +928,22 @@ fn evaluate_http(spec: &HttpSpec, observation: &HttpObservation) -> (bool, Strin
             problems.push(format!("body missing {}", short_quote(needle)));
         }
     }
+    for needle in &spec.expected_body_not_contains {
+        if observation.body.contains(needle) {
+            problems.push(format!(
+                "body unexpectedly contains {}",
+                short_quote(needle)
+            ));
+        }
+    }
+    if let Some(max) = spec.max_duration_ms {
+        let elapsed_ms = millis(observation.duration);
+        if elapsed_ms > max {
+            problems.push(format!(
+                "duration expected <= {max}ms, observed {elapsed_ms}ms"
+            ));
+        }
+    }
 
     if problems.is_empty() {
         (
@@ -776,6 +953,40 @@ fn evaluate_http(spec: &HttpSpec, observation: &HttpObservation) -> (bool, Strin
                 observation.status,
                 millis(observation.duration)
             ),
+        )
+    } else {
+        (false, problems.join("; "))
+    }
+}
+
+/// Checks markers and size floors on agent artifacts already known to exist.
+/// Missing artifacts never reach this function: they block the receipt.
+fn evaluate_agent(spec: &AgentSpec, observation: &AgentObservation) -> (bool, String) {
+    let mut problems = Vec::new();
+
+    for (entry, result) in spec.evidence.iter().zip(&observation.results) {
+        if let Some(marker) = &result.missing_marker {
+            problems.push(format!(
+                "{} missing marker {}",
+                result.path,
+                short_quote(marker)
+            ));
+        }
+        if let Some(min) = entry.min_bytes {
+            if result.bytes < min {
+                problems.push(format!(
+                    "{} is {} bytes, expected at least {min}",
+                    result.path, result.bytes
+                ));
+            }
+        }
+    }
+
+    let verified = observation.results.len();
+    if problems.is_empty() {
+        (
+            true,
+            format!("{verified} agent evidence artifact(s) notarized"),
         )
     } else {
         (false, problems.join("; "))

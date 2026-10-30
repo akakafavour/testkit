@@ -96,6 +96,8 @@ testkit/
 │   └── ship-gate/SKILL.md          # Receipt validation & PR/Deploy blocker
 ├── templates/
 │   └── TESTKIT.md                  # Standard manual dropped into repos on `testkit init`
+├── examples/
+│   └── demo/                       # Runnable demo: all three scenario kinds + the ramp
 └── crates/
     ├── testkit-cli/                # Native binary CLI (init, verify, gate, receipt)
     ├── testkit-core/               # Engine core (telemetry, time-travel, receipts, evidence)
@@ -150,9 +152,88 @@ testkit verify --tag INV-012
 # Override the hardware envelope for this run
 testkit verify --max-rss-mb 256 --max-cpu 80
 
+# Incremental ramp: run the first N scenario files
+testkit verify --limit 10
+testkit verify --limit 1000
+
 # Stop at the first failing scenario
 testkit verify --fail-fast
 ```
+
+## Scenario Kinds
+
+Three kinds cover any app without per-app drivers. The agent is the universal
+adapter: it drives what the engine cannot, and the engine notarizes the proof.
+
+**`process`** — spawn any program (CLI, worker, test binary, migration script)
+with `TESTKIT_FAKE_NOW` injected:
+
+```json
+{
+  "id": "trial-cli-honors-fake-now",
+  "invariant": "INV-TRIAL-002",
+  "kind": "process",
+  "severity": "HIGH",
+  "time_jump": "30d",
+  "process": {
+    "program": "node",
+    "args": ["tools/trial-cli.js"],
+    "expected_exit_code": 1,
+    "stdout_contains": ["EXPIRED"],
+    "max_duration_ms": 5000
+  }
+}
+```
+
+**`http`** — probe any API or web app (status, body markers, negated markers,
+timing budget), with the injected instant sent as `X-Testkit-Fake-Now`:
+
+```json
+{
+  "id": "trial-expiry-blocks-api",
+  "invariant": "INV-TRIAL-002",
+  "kind": "http",
+  "severity": "P0",
+  "time_jump": "30d",
+  "http": {
+    "url": "http://127.0.0.1:8931/api/trial",
+    "expected_status": [403],
+    "expected_body_contains": ["trial_expired"],
+    "expected_body_not_contains": ["stack"],
+    "max_duration_ms": 2000
+  }
+}
+```
+
+**`agent`** — the operator agent performs the flow with its own tools (browser
+automation for UI, `psql` for database state, shell for files) and writes the
+declared evidence artifacts; `verify` then checks them and notarizes them into
+the receipt. Missing evidence blocks the receipt rather than failing it — the
+flow was never performed, which is a different fact from the app misbehaving:
+
+```json
+{
+  "id": "agent-checkout-flow-notarized",
+  "invariant": "INV-TRIAL-003",
+  "kind": "agent",
+  "severity": "HIGH",
+  "agent": {
+    "brief": "Drive the checkout flow end to end and write the transcript to .testkit/scratch/checkout-transcript.md.",
+    "evidence": [
+      {
+        "path": ".testkit/scratch/checkout-transcript.md",
+        "must_contain": ["ORDER CONFIRMED"],
+        "min_bytes": 200
+      }
+    ]
+  }
+}
+```
+
+A runnable version of all three kinds lives in
+[`examples/demo/`](examples/demo/README.md), together with the incremental
+ramp workflow (`--limit 10` → `--limit 100` → full suite) used to pretest an
+app scale-first.
 
 ### 3. `testkit receipt`
 Inspects, parses, and validates receipts.

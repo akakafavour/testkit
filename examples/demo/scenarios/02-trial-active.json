@@ -1,0 +1,14 @@
+{
+  "id": "trial-active-at-anchor",
+  "invariant": "INV-TRIAL-002",
+  "kind": "http",
+  "severity": "HIGH",
+  "description": "The trial API serves an active trial when the clock sits inside the trial window.",
+  "http": {
+    "method": "GET",
+    "url": "http://127.0.0.1:8931/api/trial",
+    "expected_status": [200],
+    "expected_body_contains": ["\"active\":true"],
+    "max_duration_ms": 2000
+  }
+}

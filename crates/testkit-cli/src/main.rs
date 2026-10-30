@@ -64,6 +64,10 @@ enum Commands {
         #[arg(long, value_name = "mb")]
         max_rss_mb: Option<u64>,
 
+        /// Run at most the first N scenario files (incremental ramping)
+        #[arg(long, value_name = "n")]
+        limit: Option<usize>,
+
         /// Stop at the first failing scenario
         #[arg(long)]
         fail_fast: bool,
@@ -141,8 +145,9 @@ fn run() -> Result<()> {
             tag,
             max_cpu,
             max_rss_mb,
+            limit,
             fail_fast,
-        } => commands::verify::run(path, scenario, tag, max_cpu, max_rss_mb, fail_fast),
+        } => commands::verify::run(path, scenario, tag, max_cpu, max_rss_mb, limit, fail_fast),
         Commands::Gate {
             path,
             json,
@@ -185,6 +190,7 @@ mod tests {
                 tag,
                 max_cpu,
                 max_rss_mb,
+                limit,
                 fail_fast,
             } => {
                 assert_eq!(path, None);
@@ -192,6 +198,7 @@ mod tests {
                 assert_eq!(tag, None);
                 assert_eq!(max_cpu, None);
                 assert_eq!(max_rss_mb, None);
+                assert_eq!(limit, None);
                 assert!(fail_fast);
             }
             other => panic!("expected verify, got {other:?}"),
@@ -199,7 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_accepts_tag_and_envelope_overrides() {
+    fn verify_accepts_tag_envelope_and_limit_overrides() {
         let cli = Cli::try_parse_from([
             "testkit",
             "verify",
@@ -209,18 +216,22 @@ mod tests {
             "80",
             "--max-rss-mb",
             "256",
+            "--limit",
+            "10",
         ])
-        .expect("verify with tag and envelope overrides");
+        .expect("verify with tag, envelope and limit overrides");
         match cli.command {
             Commands::Verify {
                 tag,
                 max_cpu,
                 max_rss_mb,
+                limit,
                 ..
             } => {
                 assert_eq!(tag.as_deref(), Some("INV-012"));
                 assert_eq!(max_cpu, Some(80.0));
                 assert_eq!(max_rss_mb, Some(256));
+                assert_eq!(limit, Some(10));
             }
             other => panic!("expected verify, got {other:?}"),
         }

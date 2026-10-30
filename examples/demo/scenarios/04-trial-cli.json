@@ -1,0 +1,15 @@
+{
+  "id": "trial-cli-honors-fake-now",
+  "invariant": "INV-TRIAL-002",
+  "kind": "process",
+  "severity": "HIGH",
+  "description": "The trial CLI reads TESTKIT_FAKE_NOW and reports EXPIRED after a 30-day jump.",
+  "time_jump": "30d",
+  "process": {
+    "program": "node",
+    "args": ["tools/trial-cli.js"],
+    "expected_exit_code": 1,
+    "stdout_contains": ["EXPIRED"],
+    "max_duration_ms": 5000
+  }
+}

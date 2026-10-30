@@ -10,7 +10,7 @@ TestKit is the agent's testing toolkit and operating manual. You are the operato
 | `.testkit/brain/learned-rules.json` | Durable lessons from confirmed failures. Append only. |
 | `.testkit/scenarios/*.json` | Executable scenarios, one invariant per file. |
 | `.testkit/evidence/` | Screenshots, traces, logs, telemetry. Never commit this directory. |
-| `.testkit/receipts/run_*.json` | Append-only, SHA-256 signed proof of every run. |
+| `.testkit/receipts/run_*.json` | Append-only, SHA-256 integrity-verified proof of every run. |
 | `~/.testkit/brain/global-knowledge.json` | Cross-project knowledge. Read it; do not hand-edit it. |
 
 ## Non-negotiables
@@ -51,4 +51,6 @@ Do not proceed to step 5 by editing the scenario to match current behavior, and 
 
 Add or extend a scenario in `.testkit/scenarios/` whenever you add a user-visible behavior, a money movement, a permission boundary, or a schedule. It must name an existing invariant; if none fits, ask the Architect to add one and sign the revision first. Use `time_jump` (`1h`, `7d`, `14d`, `30d`) for expiry and drift cases; TestKit injects `TESTKIT_FAKE_NOW` automatically.
 
-Resource budget for test runs is the project ResourceEnvelope: 95% CPU and 1536 MB RSS on a 1 vCPU / 1.5 GB host. A scenario that exceeds it is a finding, not a reason to raise the limit.
+Three scenario kinds exist. `process` spawns any program (exit code, output markers, duration budget); `http` probes any endpoint (status, body markers, negated markers, timing budget), carrying the injected instant as `X-Testkit-Fake-Now`. For flows the engine cannot drive — UI screens, database state, platform-specific behavior — use `kind: "agent"`: declare the `brief` and the `evidence` files (path, `must_contain` markers, `min_bytes`). You perform the flow with your own tools, write the evidence exactly where the scenario says, and then run `verify`: the engine checks the artifacts and notarizes them into the receipt. Missing evidence blocks the receipt — it means the flow was never performed. Never fabricate evidence to unblock a receipt; that is tampering under rule 3.
+
+Resource budget for test runs is the project ResourceEnvelope: 95% CPU and 1536 MB RSS on a 1 vCPU / 1.5 GB host — overridable per run with `testkit verify --max-cpu / --max-rss-mb` when the Architect declares a different target. A scenario that exceeds the envelope is a finding, not a reason to raise the limit.

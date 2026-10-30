@@ -1,0 +1,15 @@
+{
+  "id": "trial-expiry-blocks-api",
+  "invariant": "INV-TRIAL-002",
+  "kind": "http",
+  "severity": "P0",
+  "description": "After a 30-day time jump the trial API rejects with 403 trial_expired.",
+  "time_jump": "30d",
+  "http": {
+    "method": "GET",
+    "url": "http://127.0.0.1:8931/api/trial",
+    "expected_status": [403],
+    "expected_body_contains": ["trial_expired"],
+    "max_duration_ms": 2000
+  }
+}

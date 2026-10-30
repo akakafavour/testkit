@@ -12,15 +12,17 @@ This document is the **target architecture**. It mixes shipped behavior with des
 
 **Shipped (Rust workspace, `crates/`):**
 - `testkit init` — deterministic `.testkit/` provisioning, `.gitignore` hygiene, `TESTKIT.md` drop.
-- `testkit verify` — scenario execution with two scenario kinds: `process` (spawn a program with `TESTKIT_FAKE_NOW` injected) and `http` (request with `X-Testkit-Fake-Now` header). Whole-run CPU/RAM telemetry, runaway detection, evidence capture, and tamper-evident receipts.
+- `testkit verify` — scenario execution with three scenario kinds: `process` (spawn a program with `TESTKIT_FAKE_NOW` injected), `http` (request with `X-Testkit-Fake-Now` header; status, body markers, negated markers, timing budget), and `agent` (the operator agent drives the flow and writes declared evidence artifacts; the engine verifies and notarizes them — missing evidence blocks the receipt). Whole-run CPU/RAM telemetry, runaway detection, evidence capture, tamper-evident receipts. Filters: `--scenario <id>`, `--tag <tag>`, `--limit <n>` for incremental ramping; per-run envelope overrides `--max-cpu` / `--max-rss-mb`; `--fail-fast`.
 - `testkit gate` — receipt ledger evaluation with 4-way verdicts (`PASSED` / `FAILED` / `NOT_PROVEN` / `BLOCKED`) and P0/HIGH blocking.
 - `testkit receipt list | latest | verify` — ledger inspection and integrity verification.
 - `testkitd` — a directory-watch daemon that logs `.testkit/` change events (no AST map, no warm harnesses yet).
 - Receipts carry a **SHA-256 integrity hash** (tamper-evident), not an asymmetric signature.
+- A runnable worked example (`examples/demo/`) and a GitHub Actions CI matrix (Linux + Windows, `cargo test --workspace`).
 
 **Vision, not yet implemented (do not assume it exists):**
 - The TypeScript/Node daemon architecture, semantic AST map, and 8-layer watcher fabric (§4).
 - AST feature extraction, state-machine synthesis, and the combinatorial scenario engine (§8).
+- Parallel scenario execution and baseline performance comparison across receipts.
 - Compute tiers A/B/C, remote runners, and hybrid split execution (§6).
 - Third-party service doubling, seed-data injection, git worktree isolation (§9).
 - Production SRE witness and telemetry ingestion (§12).
