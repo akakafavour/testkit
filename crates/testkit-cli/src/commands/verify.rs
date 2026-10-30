@@ -288,7 +288,7 @@ struct LoadFailure {
 /// when any receipt is failed or blocked.
 ///
 /// `max_cpu_percent` / `max_rss_mb` override the resource envelope for this
-/// run; passing neither uses the default $12-server envelope. `limit` caps how
+/// run; passing neither uses the standard small-node default envelope. `limit` caps how
 /// many scenario files are considered, for incremental ramping (10 → 100 → 1k).
 pub fn run(
     path: Option<PathBuf>,
@@ -306,7 +306,7 @@ pub fn run(
     }
 
     let envelope = if max_cpu_percent.is_none() && max_rss_mb.is_none() {
-        ResourceEnvelope::twelve_dollar_server()
+        ResourceEnvelope::standard_server()
     } else {
         let defaults = ResourceEnvelope::default();
         ResourceEnvelope::custom(

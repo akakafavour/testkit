@@ -58,8 +58,10 @@ impl ResourceEnvelope {
         }
     }
 
-    /// Budget for a constrained VPS (roughly 12 USD/mo): 95% CPU, 1.5 GiB RAM.
-    pub fn twelve_dollar_server() -> Self {
+    /// Sane default for a small production node: 95% CPU, 1.5 GiB RAM. This
+    /// is a starting point to override, never a rule — declare the envelope
+    /// your app actually runs on, per scenario if its parts differ.
+    pub fn standard_server() -> Self {
         Self::default()
     }
 

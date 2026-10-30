@@ -277,7 +277,7 @@ actually runs on, not one blanket number:
 Run-level flags (`--max-cpu`, `--max-rss-mb`) still apply as the fallback for
 everything that doesn't override. Built-in presets exist in `telemetry.rs`:
 `edge_serverless` (128 MB), `render_free` (512 MB), `vercel_function`
-(1 GB), the $12-server default (1.5 GB), and `high_throughput` (8 GB) —
+(1 GB), the standard small-node default (1.5 GB), and `high_throughput` (8 GB) —
 always verify the number against the provider's current plan page.
 
 ## Testing against your real hosts
@@ -306,7 +306,7 @@ about *footprint* — it cannot read the remote host's RAM from outside.
 ## Advisory, not dogma
 
 TestKit's gates are quiet until your receipts say otherwise. A vibecoder with
-5,000 users on a $12 VPS does not need blue-green deployment, sharding, or
+5,000 users on a small VPS does not need blue-green deployment, sharding, or
 Kafka — and TestKit will never block a merge for *not having* them. The
 escalation is evidence-driven:
 
