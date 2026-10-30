@@ -1,0 +1,14 @@
+{
+  "id": "trial-api-holds-10-users",
+  "invariant": "INV-PERF-001",
+  "kind": "load",
+  "severity": "HIGH",
+  "description": "The trial API holds 10 concurrent users with a sub-half-second tail.",
+  "load": {
+    "url": "http://127.0.0.1:8931/api/trial",
+    "concurrency": 10,
+    "duration_seconds": 5,
+    "max_error_rate_percent": 1.0,
+    "max_p95_ms": 500
+  }
+}

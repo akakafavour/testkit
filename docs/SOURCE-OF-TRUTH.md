@@ -12,7 +12,8 @@ This document is the **target architecture**. It mixes shipped behavior with des
 
 **Shipped (Rust workspace, `crates/`):**
 - `testkit init` — deterministic `.testkit/` provisioning, `.gitignore` hygiene, `TESTKIT.md` drop.
-- `testkit verify` — scenario execution with three scenario kinds: `process` (spawn a program with `TESTKIT_FAKE_NOW` injected), `http` (request with `X-Testkit-Fake-Now` header; status, body markers, negated markers, timing budget), and `agent` (the operator agent drives the flow and writes declared evidence artifacts; the engine verifies and notarizes them — missing evidence blocks the receipt). Whole-run CPU/RAM telemetry, runaway detection, evidence capture, tamper-evident receipts. Filters: `--scenario <id>`, `--tag <tag>`, `--limit <n>` for incremental ramping; per-run envelope overrides `--max-cpu` / `--max-rss-mb`; `--fail-fast`.
+- `testkit verify` — scenario execution with four scenario kinds: `process` (spawn a program with `TESTKIT_FAKE_NOW` injected), `http` (request with `X-Testkit-Fake-Now` header; status, body markers, negated markers, timing budget), `agent` (the operator agent drives the flow and writes declared evidence artifacts; the engine verifies and notarizes them — missing evidence blocks the receipt), and `load` (concurrent virtual users against one endpoint, gated on error rate and p95 latency). Whole-run CPU/RAM telemetry, runaway detection, evidence capture, tamper-evident receipts. Filters: `--scenario <id>`, `--tag <tag>`, `--limit <n>` for incremental ramping; per-run envelope overrides `--max-cpu` / `--max-rss-mb`; `--fail-fast`.
+- Per-service resource envelopes: each scenario can declare its own budget (frontend vs backend tracked separately), with run-level flags as fallback and hosting-plan presets (edge 128 MB, Render free 512 MB, serverless-function 1 GB, $12-server 1.5 GB, high-throughput 8 GB).
 - `testkit gate` — receipt ledger evaluation with 4-way verdicts (`PASSED` / `FAILED` / `NOT_PROVEN` / `BLOCKED`) and P0/HIGH blocking.
 - `testkit receipt list | latest | verify` — ledger inspection and integrity verification.
 - `testkitd` — a directory-watch daemon that logs `.testkit/` change events (no AST map, no warm harnesses yet).
@@ -22,10 +23,10 @@ This document is the **target architecture**. It mixes shipped behavior with des
 **Vision, not yet implemented (do not assume it exists):**
 - The TypeScript/Node daemon architecture, semantic AST map, and 8-layer watcher fabric (§4).
 - AST feature extraction, state-machine synthesis, and the combinatorial scenario engine (§8).
-- Parallel scenario execution and baseline performance comparison across receipts.
-- Compute tiers A/B/C, remote runners, and hybrid split execution (§6).
+- Automatic breaking-point search across envelopes, distributed/multi-node load generation, and baseline regression comparison across receipts.
+- Compute tiers A/B/C, remote runners, and hybrid split execution (§6) — remote targets work today only as plain scenario URLs and `ssh` process scenarios, without remote telemetry.
 - Third-party service doubling, seed-data injection, git worktree isolation (§9).
-- Production SRE witness and telemetry ingestion (§12).
+- Production SRE witness and telemetry ingestion (§12) — real-time log connections are not built.
 - Numeric targets quoted here (2–8 ms/scenario, 10,000+ scenarios) are design goals, not measured results.
 
 When making claims about TestKit to users or in marketing, cite only the **Shipped** list, or label the rest as roadmap.

@@ -230,7 +230,98 @@ flow was never performed, which is a different fact from the app misbehaving:
 }
 ```
 
-A runnable version of all three kinds lives in
+**`load`** — N concurrent virtual users hammer one endpoint for a fixed
+window; the gate is the error rate and the tail latency. This is how you find
+the breaking point and *keep it as an invariant*: once p95 holds at 20
+concurrent users today, the scenario blocks any change that makes it 4
+seconds tomorrow.
+
+```json
+{
+  "id": "trial-api-holds-20-users",
+  "invariant": "INV-PERF-001",
+  "kind": "load",
+  "severity": "HIGH",
+  "load": {
+    "url": "http://127.0.0.1:8931/api/trial",
+    "concurrency": 20,
+    "duration_seconds": 30,
+    "max_error_rate_percent": 1.0,
+    "max_p95_ms": 500
+  }
+}
+```
+
+The generator measures the endpoint's *answers*, not its host's resources:
+the server-side footprint (RAM, CPU) comes from the platform the app runs on
+(`docker stats`, the provider dashboard) captured as `agent` evidence next to
+the load receipt.
+
+## Per-service budgets
+
+Real apps have parts with different homes — a Next.js frontend on Vercel, a
+Go backend on a $6 VPS, Supabase Postgres behind both. Each scenario can
+declare its own `envelope`, so every part is tracked against the plan it
+actually runs on, not one blanket number:
+
+```json
+{
+  "id": "backend-uses-vps-budget",
+  "invariant": "INV-PERF-002",
+  "kind": "process",
+  "envelope": { "max_cpu_percent": 95.0, "max_rss_mb": 512 },
+  "process": { "program": "./server", "args": ["--port", "8080"] }
+}
+```
+
+Run-level flags (`--max-cpu`, `--max-rss-mb`) still apply as the fallback for
+everything that doesn't override. Built-in presets exist in `telemetry.rs`:
+`edge_serverless` (128 MB), `render_free` (512 MB), `vercel_function`
+(1 GB), the $12-server default (1.5 GB), and `high_throughput` (8 GB) —
+always verify the number against the provider's current plan page.
+
+## Testing against your real hosts
+
+Scenarios hit URLs, so your deployed app is already a target — no code needed:
+
+- **Vercel / Render / Fly previews:** point the scenario `url` at
+  `https://my-app.vercel.app/api/trial`. The `X-Testkit-Fake-Now` header
+  travels with the request; your deployed app honors the same time-travel
+  contract the local one does.
+- **Supabase / hosted Postgres:** `http` scenarios against PostgREST/edge
+  functions, or `process` scenarios running `psql` assertions against the
+  connection string from your env.
+- **A VPS you own:** `process` scenarios whose program is `ssh` —
+  `{"program": "ssh", "args": ["my-vps", "pg_dump -- ..."]}` — runs the
+  command remotely; agent evidence captures the remote's `docker stats` and
+  logs, since the engine's telemetry watcher only sees local processes.
+- **Your laptop can't handle it?** Run the verify pass inside GitHub
+  Codespaces or on the VPS itself; receipts compare across environments
+  because the telemetry and evidence travel inside the receipt.
+
+The honest boundary: when the target is remote, TestKit verifies *behavior*
+(status, body, latency as seen from here) and notarizes evidence you supply
+about *footprint* — it cannot read the remote host's RAM from outside.
+
+## Advisory, not dogma
+
+TestKit's gates are quiet until your receipts say otherwise. A vibecoder with
+5,000 users on a $12 VPS does not need blue-green deployment, sharding, or
+Kafka — and TestKit will never block a merge for *not having* them. The
+escalation is evidence-driven:
+
+1. Your load receipts hold at your current envelope: nothing fires, nothing
+   is suggested. The system is green and stays boring.
+2. The same receipts start showing `RAM_CEILING` violations, p95 creep, or
+   error-rate budget breaches at unchanged traffic: the gate blocks, and
+   *that* is the moment the advisory tier speaks — "your node is saturated at
+   4,900 users; here is the cheapest next step," which is usually a cache or
+   an index, not a second server.
+3. Only when receipts prove a single node cannot hold the traffic does the
+   advice become "add a component" — and the added complexity itself becomes
+   the next set of invariants to gate.
+
+A runnable version of the process/http/agent/load kinds lives in
 [`examples/demo/`](examples/demo/README.md), together with the incremental
 ramp workflow (`--limit 10` → `--limit 100` → full suite) used to pretest an
 app scale-first.

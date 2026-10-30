@@ -28,6 +28,9 @@ const HARD_TIMEOUT: Duration = Duration::from_secs(300);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const TRACE_BODY_LIMIT: usize = 4_000;
 const LOG_BODY_LIMIT: usize = 100_000;
+const MAX_LOAD_WORKERS: u32 = 256;
+const MAX_LOAD_SECONDS: u64 = 600;
+const MAX_LOAD_SAMPLES: usize = 1_000_000;
 
 // ---------------------------------------------------------------------------
 // Scenario schema
@@ -39,6 +42,7 @@ enum ScenarioKind {
     Process,
     Http,
     Agent,
+    Load,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -53,6 +57,12 @@ struct Scenario {
     #[serde(default)] process: Option<ProcessSpec>,
     #[serde(default)] http: Option<HttpSpec>,
     #[serde(default)] agent: Option<AgentSpec>,
+    #[serde(default)] load: Option<LoadSpec>,
+    /// Per-service resource budget. A frontend scenario and a backend
+    /// scenario can declare different envelopes so each part of the app is
+    /// tracked against the plan it actually runs on; when absent, the
+    /// run-level envelope (or its `--max-cpu` / `--max-rss-mb` overrides) applies.
+    #[serde(default)] envelope: Option<ResourceEnvelope>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -106,6 +116,37 @@ struct AgentEvidence {
     #[serde(default)] min_bytes: Option<u64>,
 }
 
+/// A concurrent load window against one endpoint: N virtual users hammering
+/// the URL for a fixed duration, gated on error rate and tail latency.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct LoadSpec {
+    url: String,
+    #[serde(default = "default_http_method")] method: String,
+    #[serde(default)] headers: BTreeMap<String, String>,
+    /// Concurrent virtual users. Capped at 256 worker threads.
+    #[serde(default = "default_load_concurrency")] concurrency: u32,
+    /// Wall-clock length of the load window in seconds. Capped at 600.
+    #[serde(default = "default_load_duration")] duration_seconds: u64,
+    /// Highest acceptable share of failed requests, in percent. A failure is
+    /// a transport error or a status outside 2xx/3xx.
+    #[serde(default = "default_load_error_rate")] max_error_rate_percent: f64,
+    /// Highest acceptable 95th-percentile latency, in milliseconds.
+    #[serde(default)] max_p95_ms: Option<u64>,
+}
+
+fn default_load_concurrency() -> u32 {
+    10
+}
+
+fn default_load_duration() -> u64 {
+    10
+}
+
+fn default_load_error_rate() -> f64 {
+    1.0
+}
+
 fn default_http_method() -> String {
     "GET".to_string()
 }
@@ -118,6 +159,28 @@ enum Outcome {
     Process(ProcessObservation),
     Http(HttpObservation),
     Agent(AgentObservation),
+    Load(LoadObservation),
+}
+
+/// One completed request from a load worker.
+struct LoadSample {
+    /// HTTP status, or None for a transport error (timeout, connection refused).
+    status: Option<u16>,
+    latency_ms: u64,
+}
+
+/// Aggregated result of a load window.
+struct LoadObservation {
+    total: u64,
+    ok: u64,
+    failed: u64,
+    error_rate_percent: f64,
+    requests_per_second: f64,
+    p50_ms: u64,
+    p95_ms: u64,
+    max_ms: u64,
+    /// (status, count) pairs for every observed HTTP status.
+    status_counts: Vec<(u16, u64)>,
 }
 
 /// The notarized result of one declared agent evidence artifact.
@@ -365,8 +428,11 @@ fn verify_scenario(
     store: &EvidenceStore,
     receipts_dir: &Path,
     scenario: &Scenario,
-    envelope: ResourceEnvelope,
+    run_envelope: ResourceEnvelope,
 ) -> Result<Verdict> {
+    // A scenario may carry its own budget (frontend vs backend tracked
+    // separately); the run-level envelope is the fallback.
+    let envelope = scenario.envelope.unwrap_or(run_envelope);
     let stem = evidence_stem(&scenario.id);
     let fake_now = compute_fake_now(scenario.time_jump.as_deref());
     let execution = execute_scenario(root, scenario, &fake_now, envelope);
@@ -409,6 +475,10 @@ fn execute_scenario(
         ScenarioKind::Agent => match &scenario.agent {
             Some(spec) => execute_agent(root, spec, fake_now),
             None => Execution::blocked("scenario has kind 'agent' but no agent block", fake_now),
+        },
+        ScenarioKind::Load => match &scenario.load {
+            Some(spec) => execute_load(spec, fake_now),
+            None => Execution::blocked("scenario has kind 'load' but no load block", fake_now),
         },
     }
 }
@@ -608,6 +678,143 @@ fn execute_agent(root: &Path, spec: &AgentSpec, fake_now: &str) -> Execution {
 }
 
 // ---------------------------------------------------------------------------
+// Load generation
+// ---------------------------------------------------------------------------
+
+/// Runs a concurrent load window against one endpoint. Each virtual user is
+/// a worker thread issuing blocking requests until the deadline; results
+/// stream back over a channel and are aggregated into error rate, throughput,
+/// and latency percentiles.
+///
+// The generator measures the endpoint's answers, not its host's resources:
+// the load workers' own CPU/RAM says nothing about the server under test.
+// Server-side footprint comes from the platform (docker stats, provider
+// dashboards) captured as agent evidence alongside the load scenario.
+fn execute_load(spec: &LoadSpec, fake_now: &str) -> Execution {
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(spec.duration_seconds.min(MAX_LOAD_SECONDS));
+    let workers = spec.concurrency.clamp(1, MAX_LOAD_WORKERS);
+    let (tx, rx) = mpsc::channel::<LoadSample>();
+
+    let mut default_headers = reqwest::header::HeaderMap::new();
+    for (name, value) in &spec.headers {
+        let header_error = match reqwest::header::HeaderName::from_bytes(name.as_bytes()) {
+            Err(_) => Some(format!("invalid header name '{name}'")),
+            Ok(header_name) => match reqwest::header::HeaderValue::from_str(value) {
+                Err(_) => Some(format!("invalid value for header '{name}'")),
+                Ok(header_value) => {
+                    default_headers.insert(header_name, header_value);
+                    None
+                }
+            },
+        };
+        if let Some(error) = header_error {
+            return Execution::blocked(error, fake_now);
+        }
+    }
+
+    for _ in 0..workers {
+        let tx = tx.clone();
+        let spec = spec.clone();
+        let fake_now = fake_now.to_string();
+        let default_headers = default_headers.clone();
+        thread::spawn(move || {
+            let client = match Client::builder()
+                .timeout(HTTP_TIMEOUT)
+                .default_headers(default_headers)
+                .build()
+            {
+                Ok(client) => client,
+                Err(_) => return,
+            };
+            let method = match reqwest::Method::from_bytes(spec.method.as_bytes()) {
+                Ok(method) => method,
+                Err(_) => return,
+            };
+            while Instant::now() < deadline {
+                let request_started = Instant::now();
+                let response = client
+                    .request(method.clone(), &spec.url)
+                    .header("X-Testkit-Fake-Now", &fake_now)
+                    .send();
+                let latency_ms = millis(request_started.elapsed());
+                let sample = match response {
+                    Ok(response) => LoadSample {
+                        status: Some(response.status().as_u16()),
+                        latency_ms,
+                    },
+                    Err(_) => LoadSample {
+                        status: None,
+                        latency_ms,
+                    },
+                };
+                if tx.send(sample).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    drop(tx);
+
+    let mut latencies: Vec<u64> = Vec::new();
+    let mut statuses: BTreeMap<u16, u64> = BTreeMap::new();
+    let mut ok = 0u64;
+    let mut failed = 0u64;
+    for sample in rx {
+        if latencies.len() < MAX_LOAD_SAMPLES {
+            latencies.push(sample.latency_ms);
+        }
+        match sample.status {
+            Some(status) => {
+                *statuses.entry(status).or_insert(0) += 1;
+                if (200..400).contains(&status) {
+                    ok += 1;
+                } else {
+                    failed += 1;
+                }
+            }
+            None => failed += 1,
+        }
+    }
+    // The rx loop above ends only when every worker has finished and dropped
+    // its sender, so all in-flight requests are accounted for here.
+    latencies.sort_unstable();
+    let total = ok + failed;
+    let elapsed_seconds = started.elapsed().as_secs_f64().max(0.001);
+    let observation = LoadObservation {
+        total,
+        ok,
+        failed,
+        error_rate_percent: if total == 0 {
+            100.0
+        } else {
+            failed as f64 * 100.0 / total as f64
+        },
+        requests_per_second: total as f64 / elapsed_seconds,
+        p50_ms: percentile(&latencies, 50),
+        p95_ms: percentile(&latencies, 95),
+        max_ms: latencies.last().copied().unwrap_or(0),
+        status_counts: statuses.into_iter().collect(),
+    };
+
+    Execution {
+        outcome: Ok(Outcome::Load(observation)),
+        telemetry: TelemetryReport::default(),
+        duration_ms: millis(started.elapsed()),
+        fake_now: fake_now.to_string(),
+    }
+}
+
+/// The p-th percentile of a pre-sorted slice (0 when empty).
+fn percentile(sorted: &[u64], p: usize) -> u64 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let index = (sorted.len() * p / 100).min(sorted.len() - 1);
+    sorted[index]
+}
+
+// ---------------------------------------------------------------------------
 // Telemetry
 // ---------------------------------------------------------------------------
 
@@ -758,11 +965,52 @@ fn record_evidence(
             store.write_json("traces", &format!("{stem}.json"), &trace)
                 .context("writing the agent trace")?;
         }
+        Ok(Outcome::Load(observation)) => {
+            let spec = scenario.load.as_ref();
+            let statuses: Vec<_> = observation
+                .status_counts
+                .iter()
+                .map(|(status, count)| json!({ "status": status, "count": count }))
+                .collect();
+            let trace = json!({
+                "scenario": &scenario.id,
+                "description": &scenario.description,
+                "kind": "load",
+                "url": spec.map(|spec| spec.url.as_str()).unwrap_or(""),
+                "method": spec.map(|spec| spec.method.as_str()).unwrap_or("GET"),
+                "concurrency": spec.map(|spec| spec.concurrency).unwrap_or(0),
+                "duration_seconds": spec.map(|spec| spec.duration_seconds).unwrap_or(0),
+                "total_requests": observation.total,
+                "ok": observation.ok,
+                "failed": observation.failed,
+                "error_rate_percent": observation.error_rate_percent,
+                "requests_per_second": observation.requests_per_second,
+                "p50_ms": observation.p50_ms,
+                "p95_ms": observation.p95_ms,
+                "max_ms": observation.max_ms,
+                "statuses": statuses,
+                "fake_now": fake_now,
+            });
+            store.write_json("traces", &format!("{stem}.json"), &trace)
+                .context("writing the load trace")?;
+            store.write_json(
+                "telemetry",
+                &format!("{stem}-load.json"),
+                &json!({
+                    "note": "generator-side numbers only; the server's footprint comes from its own host, captured as agent evidence",
+                    "requests_per_second": observation.requests_per_second,
+                    "p95_ms": observation.p95_ms,
+                    "error_rate_percent": observation.error_rate_percent,
+                }),
+            )
+            .context("writing the load summary")?;
+        }
         Err(reason) => {
             let log_name = match scenario.kind {
                 ScenarioKind::Process => format!("{stem}.stderr.log"),
                 ScenarioKind::Http => format!("{stem}.response.log"),
                 ScenarioKind::Agent => format!("{stem}.agent.log"),
+                ScenarioKind::Load => format!("{stem}.load.log"),
             };
             store.write_text("logs", &log_name, &format!("execution error: {reason}\n"))
                 .context("writing the failure log")?;
@@ -775,6 +1023,7 @@ fn record_evidence(
                     ScenarioKind::Process => "process",
                     ScenarioKind::Http => "http",
                     ScenarioKind::Agent => "agent",
+                    ScenarioKind::Load => "load",
                 },
                 "program": process.map(|spec| spec.program.as_str()),
                 "args": process.map(|spec| spec.args.clone()),
@@ -851,6 +1100,23 @@ fn evaluate_scenario(
             }
             None => blocked_evaluation(
                 "agent results arrived without an agent block".to_string(),
+                violations,
+            ),
+        },
+        Ok(Outcome::Load(observation)) => match &scenario.load {
+            Some(spec) => {
+                if observation.total == 0 {
+                    return blocked_evaluation(
+                        "load window closed without a single response — is the endpoint up?"
+                            .to_string(),
+                        violations,
+                    );
+                }
+                let (passed, detail) = evaluate_load(spec, observation);
+                finish_evaluation(passed, detail, violations)
+            }
+            None => blocked_evaluation(
+                "load results arrived without a load block".to_string(),
                 violations,
             ),
         },
@@ -952,6 +1218,43 @@ fn evaluate_http(spec: &HttpSpec, observation: &HttpObservation) -> (bool, Strin
                 "status {}, body markers matched in {}ms",
                 observation.status,
                 millis(observation.duration)
+            ),
+        )
+    } else {
+        (false, problems.join("; "))
+    }
+}
+
+/// Checks a load window against its declared error-rate and latency budgets.
+fn evaluate_load(spec: &LoadSpec, observation: &LoadObservation) -> (bool, String) {
+    let mut problems = Vec::new();
+
+    if observation.error_rate_percent > spec.max_error_rate_percent {
+        problems.push(format!(
+            "error rate {:.2}% exceeded the {:.2}% budget",
+            observation.error_rate_percent, spec.max_error_rate_percent
+        ));
+    }
+    if let Some(max) = spec.max_p95_ms {
+        if observation.p95_ms > max {
+            problems.push(format!(
+                "p95 latency {}ms exceeded the {max}ms budget",
+                observation.p95_ms
+            ));
+        }
+    }
+
+    if problems.is_empty() {
+        (
+            true,
+            format!(
+                "{} requests at {:.1} rps, error rate {:.2}%, p50 {}ms, p95 {}ms, max {}ms",
+                observation.total,
+                observation.requests_per_second,
+                observation.error_rate_percent,
+                observation.p50_ms,
+                observation.p95_ms,
+                observation.max_ms
             ),
         )
     } else {

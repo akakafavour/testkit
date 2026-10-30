@@ -19,6 +19,7 @@ The scenarios in `scenarios/` are copied into a project's
 | `03-trial-expired.json` | `http` + `time_jump: 30d` | After a 30-day jump the API rejects with 403 `trial_expired` |
 | `04-trial-cli.json` | `process` + `time_jump: 30d` | The CLI honors `TESTKIT_FAKE_NOW` and prints `EXPIRED` |
 | `05-agent-checkout.json` | `agent` | The operator agent drove a checkout flow and notarized the transcript |
+| `06-load-trial.json` | `load` | The trial API holds 10 concurrent users under 500ms p95 with <1% errors |
 
 ## Run it
 
@@ -60,3 +61,10 @@ and with `--fail-fast` while debugging. Scale bugs show up as receipts: ramp
 the same scenarios under a bigger envelope and compare `duration_ms` and
 `peak_ram_mb` across receipts — a scenario that jumps from 8ms to 4s between
 the 100-row and 10k-row mark is an O(N²) you just caught with zero profilers.
+
+Each scenario can also carry its own `envelope` block, so the backend is
+tracked against the VPS plan it runs on while the frontend is tracked against
+Vercel's — see the README's "Per-service budgets". The load scenario
+(`06`) is the breaking-point tool: raise `concurrency` run over run and
+watch which budget fails first — that number, in a receipt, is your app's
+measured capacity.

@@ -79,6 +79,24 @@ impl ResourceEnvelope {
             max_rss_mb: 8192,
         }
     }
+
+    /// Render free web service: 512 MiB RAM, shared (burst) CPU. Verify the
+    /// number against the provider's current plan page before relying on it.
+    pub fn render_free() -> Self {
+        Self {
+            max_cpu_percent: 100.0,
+            max_rss_mb: 512,
+        }
+    }
+
+    /// Default serverless function tier (Vercel/Netlify-class): 1 GiB RAM,
+    /// short CPU bursts. Verify against the provider's current plan page.
+    pub fn vercel_function() -> Self {
+        Self {
+            max_cpu_percent: 200.0,
+            max_rss_mb: 1024,
+        }
+    }
 }
 
 /// One point-in-time reading for the watched process.
