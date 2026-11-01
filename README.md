@@ -99,8 +99,8 @@ testkit/
 ├── examples/
 │   └── demo/                       # Runnable demo: all three scenario kinds + the ramp
 └── crates/
-    ├── testkit-cli/                # Native binary CLI (init, verify, gate, receipt)
-    ├── testkit-core/               # Engine core (telemetry, time-travel, receipts, evidence)
+    ├── testkit-cli/                # Native binary CLI (init, map, verify, gate, receipt)
+    ├── testkit-core/               # Engine core (semantic map, telemetry, time-travel, receipts, evidence)
     └── testkit-daemon/             # Optional ambient background observer
 ```
 
@@ -139,7 +139,19 @@ testkit init --path ./my-project
 ```
 Creates `.testkit/` (`brain/`, `evidence/`, `receipts/`, `scenarios/`), configures `.gitignore`, and drops `TESTKIT.md`.
 
-### 2. `testkit verify`
+### 2. `testkit map`
+Builds and reconciles the **semantic map** — two independent witnesses of the same codebase. The engine detects the stack deterministically from dependency manifests, runs a machine extractor when one is installed, and otherwise hands the mapping job to the agent (every framework, language, and platform works from day one — the agent *is* the mapper).
+```sh
+# Detect the stack, run the machine mapper, reconcile if the agent map exists
+testkit map
+
+# Print the agent tour instructions (the agent draws its own map, never
+# reading the machine map, then re-runs `testkit map` to reconcile)
+testkit map --agent-brief
+```
+Artifacts in `.testkit/brain/`: `stack.json` (detected from), `map.machine.json`, `map.agent.json`, `map.reconciliation.json` — where *agreed* nodes are proof, and every machine-only / agent-only difference is a finding fed back to the witness that missed it.
+
+### 3. `testkit verify`
 Executes scenarios against declared invariants and profiles host hardware usage (CPU/RAM) for the whole run.
 ```sh
 # Run the entire scenario suite
@@ -326,7 +338,7 @@ A runnable version of the process/http/agent/load kinds lives in
 ramp workflow (`--limit 10` → `--limit 100` → full suite) used to pretest an
 app scale-first.
 
-### 3. `testkit receipt`
+### 4. `testkit receipt`
 Inspects, parses, and validates receipts.
 ```sh
 # List every receipt in the ledger with signature status
@@ -339,7 +351,7 @@ testkit receipt latest
 testkit receipt verify .testkit/receipts/run_receipt-2026-10-29-0001.json
 ```
 
-### 4. `testkit gate`
+### 5. `testkit gate`
 Evaluates receipts to enforce quality gates in pre-commit hooks and CI/CD pipelines.
 ```sh
 # Standard gate: exits with 1 if any open P0/HIGH failures exist, 0 if clean

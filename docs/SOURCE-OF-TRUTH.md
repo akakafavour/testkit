@@ -12,6 +12,7 @@ This document is the **target architecture**. It mixes shipped behavior with des
 
 **Shipped (Rust workspace, `crates/`):**
 - `testkit init` — deterministic `.testkit/` provisioning, `.gitignore` hygiene, `TESTKIT.md` drop.
+- `testkit map` — the two-witness semantic map orchestration: deterministic stack detection from dependency manifests (`stack.json`), machine extractor discovery and invocation (`extractor-<framework>` executables), the agent-tour brief (the universal fallback — every framework, language, and platform is mappable from day one, by the agent), map validation, and reconciliation (`agreed` / `machine_only` / `agent_only` findings written to `map.reconciliation.json`). See §13.
 - `testkit verify` — scenario execution with four scenario kinds: `process` (spawn a program with `TESTKIT_FAKE_NOW` injected), `http` (request with `X-Testkit-Fake-Now` header; status, body markers, negated markers, timing budget), `agent` (the operator agent drives the flow and writes declared evidence artifacts; the engine verifies and notarizes them — missing evidence blocks the receipt), and `load` (concurrent virtual users against one endpoint, gated on error rate and p95 latency). Whole-run CPU/RAM telemetry, runaway detection, evidence capture, tamper-evident receipts. Filters: `--scenario <id>`, `--tag <tag>`, `--limit <n>` for incremental ramping; per-run envelope overrides `--max-cpu` / `--max-rss-mb`; `--fail-fast`.
 - Per-service resource envelopes: each scenario can declare its own budget (frontend vs backend tracked separately), with run-level flags as fallback and hosting-plan presets (edge 128 MB, Render free 512 MB, serverless-function 1 GB, standard small-node 1.5 GB, high-throughput 8 GB). Envelopes are declared per app and per part — the engine ships no opinion about what your hosting should cost.
 - `testkit gate` — receipt ledger evaluation with 4-way verdicts (`PASSED` / `FAILED` / `NOT_PROVEN` / `BLOCKED`) and P0/HIGH blocking.
@@ -21,8 +22,9 @@ This document is the **target architecture**. It mixes shipped behavior with des
 - A runnable worked example (`examples/demo/`) and a GitHub Actions CI matrix (Linux + Windows, `cargo test --workspace`).
 
 **Vision, not yet implemented (do not assume it exists):**
-- The TypeScript/Node daemon architecture, semantic AST map, and 8-layer watcher fabric (§4).
-- AST feature extraction, state-machine synthesis, and the combinatorial scenario engine (§8).
+- The TypeScript/Node daemon architecture, live 8-layer watcher fabric (§4), and a warm semantic-map daemon.
+- Machine extractors themselves: the `testkit map` contract, discovery, and agent fallback ship, but no per-framework `extractor-*` binaries ship yet — every map is agent-authored unless a community extractor is installed.
+- AST feature extraction at scale, state-machine synthesis, and the combinatorial scenario engine (§8) — the map contract is its foundation; the generator is not built.
 - Automatic breaking-point search across envelopes, distributed/multi-node load generation, and baseline regression comparison across receipts.
 - Compute tiers A/B/C, remote runners, and hybrid split execution (§6) — remote targets work today only as plain scenario URLs and `ssh` process scenarios, without remote telemetry.
 - Third-party service doubling, seed-data injection, git worktree isolation (§9).
@@ -666,3 +668,40 @@ TestKit does not stop when you click "Deploy". After your application is live wi
 
 
 
+
+---
+
+## 13. The Semantic Map Contract & Two-Witness Collaboration
+
+TestKit and the agent are collaborators, and neither grades its own work. The codebase gets **two independent floor plans**, and the comparison between them is where errors surface.
+
+### The Adapter Principle
+
+TestKit does not ship hardcoded support for 50 environments. TestKit ships a small, fixed **contract** — the scenario kinds, the evidence rules, the map schema (`testkit.map/1`), the receipt format — and **the agent fulfills the contract with whatever the environment has**. Install in an iOS project and the agent picks up `xcodebuild` and simulators; Android — gradle and adb; a Linux VPS — ssh and docker; NestJS, Vue, Angular, or raw code with no framework at all. Same contract, different tools, zero configuration. That is what "adapter" means here: the agent adapts; TestKit stays constant.
+
+### The Three Files (`.testkit/brain/`)
+
+| File | Author | What it is |
+|---|---|---|
+| `stack.json` | The engine | Deterministic stack detection from dependency manifests, recording *what it detected from*. Never the agent's guess. |
+| `map.machine.json` | A machine extractor (`extractor-<framework>`) | The fast, literal witness: parses the repo by framework convention and emits nodes, edges, and a mandatory blind-spot report. |
+| `map.agent.json` | The agent's own tour | The attentive witness: walks the codebase independently — every route, handler, screen, command, model, button, and connection — without reading the machine map. |
+
+Reconciliation (`map.reconciliation.json`) compares them:
+
+- **Agreed** nodes (same kind + path in both maps) are *proven*.
+- **Machine-only** nodes: the agent's tour missed them — the tour must revisit.
+- **Agent-only** nodes: the extractor's blind spots — extractor fixes or new invariants.
+
+Every difference is a finding, not a failure. The disagreement loop is the collaboration's most valuable output: it fixes extractors, extends the agent's attention, and surfaces the surfaces nobody is watching. Both witnesses are hashed into receipts, so nobody can quietly redraw a floor plan after the fact.
+
+### Honesty Rules of the Contract
+
+1. Every map carries its author (`machine { extractor, version }` or `agent`) — provenance is part of the artifact.
+2. Every map carries `coverage`: files scanned, files parsed, and every unreadable path with a reason. A silent miss violates the contract.
+3. The agent never reads, corrects, or copies the machine map while drawing its own. Two witnesses that compare notes stop being independent.
+4. Machine extractors are pluggable executables with one versioned schema — the engine grows no framework list, the ecosystem does. Until an extractor exists for a stack, the agent *is* the mapper: every framework works from day one.
+
+### What the Map Feeds
+
+The map is an accelerator, never a requirement — TestKit verifies fully without it. When it exists, it becomes the fuel for the combinatorial scenario engine (§8): every agreed surface is a candidate scenario, every surface with no scenario watching it is a coverage gap, and the state-machine synthesis reads the map instead of re-reading the code.

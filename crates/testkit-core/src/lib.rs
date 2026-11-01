@@ -5,10 +5,15 @@ pub mod telemetry;
 pub mod time_travel;
 pub mod receipt;
 pub mod evidence;
+pub mod semantic_map;
 
 pub use evidence::EvidenceStore;
 pub use receipt::{
     HardwareMetrics, InvariantCheck, Receipt, ReceiptBuilder, ReceiptStatus, Severity, Violation,
+};
+pub use semantic_map::{
+    MapAuthor, MapCoverage, MapEdge, MapNode, Reconciliation, SemanticMap, UnresolvedPath,
+    MAP_VERSION,
 };
 pub use telemetry::{
     ResourceEnvelope, RunawayFinding, RunawayKind, TelemetrySample, TelemetryWatcher,

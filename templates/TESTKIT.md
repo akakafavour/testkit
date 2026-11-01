@@ -26,6 +26,7 @@ TestKit is the agent's testing toolkit and operating manual. You are the operato
 
 ```bash
 testkit init --path .
+testkit map --path .              # --agent-brief prints your mapping instructions
 testkit verify --path . --scenario <id>
 testkit verify --path . --fail-fast
 testkit gate --path .
@@ -34,6 +35,17 @@ testkit receipt verify .testkit/receipts/run_<id>.json
 ```
 
 `testkitd --project . --port 4949 --interval-ms 1000` runs the local daemon when a scenario needs live telemetry. Stop it when you are done.
+
+## The semantic map: two witnesses
+
+TestKit and you are collaborators, and neither of you grades your own work. The codebase gets **two independent floor plans**, and the comparison between them is where errors surface.
+
+1. **Detect.** Run `testkit map`. The engine reads the dependency manifests itself (never guess the stack) and records `.testkit/brain/stack.json`.
+2. **Machine map.** If `extractor-<framework>` exists in `.testkit/extractors/` or `~/.testkit/extractors/`, TestKit runs it and writes `map.machine.json`. If none exists for this stack, **you are the mapper** — TestKit works with any framework, language, or platform from day one.
+3. **Your tour.** Run `testkit map --agent-brief` and follow it. Walk the codebase yourself — every route, handler, screen, command, model, button, and what connects to what — and write `.testkit/brain/map.agent.json` to the `testkit.map/1` schema. Rules: exact project-relative paths; every file you could not interpret goes in `coverage.unresolved` with a reason; never fabricate a node.
+4. **Never touch the machine map.** Do not read `map.machine.json` while drawing yours, do not correct it, do not copy from it. Two witnesses that compare notes stop being independent, and the whole check collapses.
+5. **Reconcile.** Re-run `testkit map`. Agreement between the two maps is proof. Every difference is a finding: doors only the machine found mean your tour must revisit them; doors only you found mean the extractor has a blind spot to fix (or a new invariant to declare).
+6. **Feed the loop.** Use the reconciliation to extend coverage in `.testkit/scenarios/` — every agreed surface with no scenario watching it is a coverage gap. A map that never turns into scenarios is decoration.
 
 ## When the gate blocks
 

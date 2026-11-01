@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 rust-version = "1.77"
 license = "MIT"
-description = "TestKit command-line interface: init, verify, gate, and receipt inspection"
+description = "TestKit command-line interface: init, verify, map, gate, and receipt inspection"
 publish = false
 
 [[bin]]
@@ -21,3 +21,4 @@ chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 sha2 = "0.10"
 hex = "0.4"
+dirs = "5"

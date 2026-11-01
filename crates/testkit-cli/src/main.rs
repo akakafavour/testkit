@@ -1,9 +1,10 @@
 //! TestKit command-line interface.
 //!
-//! One binary, four verbs: `init` grounds a workspace, `verify` executes
-//! scenarios, `gate` evaluates the receipt ledger, and `receipt` inspects the
-//! signed artifacts. Every command is deterministic and non-interactive so it
-//! can run identically from a terminal, a hook, or CI.
+//! One binary, five verbs: `init` grounds a workspace, `map` orchestrates the
+//! two-witness semantic map, `verify` executes scenarios, `gate` evaluates
+//! the receipt ledger, and `receipt` inspects the signed artifacts. Every
+//! command is deterministic and non-interactive so it can run identically
+//! from a terminal, a hook, or CI.
 
 use std::path::PathBuf;
 
@@ -13,6 +14,7 @@ use clap::{Parser, Subcommand};
 mod commands {
     pub mod gate;
     pub mod init;
+    pub mod map;
     pub mod receipt;
     pub mod verify;
 }
@@ -40,6 +42,13 @@ enum Commands {
         /// Project directory (defaults to the current directory)
         #[arg(long, value_name = "dir")]
         path: Option<PathBuf>,
+    },
+
+    /// Build and reconcile the semantic map (machine extractor + agent tour)
+    Map {
+        /// Print the agent tour instructions instead of running orchestration
+        #[arg(long)]
+        agent_brief: bool,
     },
 
     /// Run deterministic scenarios and record evidence
@@ -139,6 +148,7 @@ fn run() -> Result<()> {
 
     match cli.command {
         Commands::Init { path } => commands::init::run(path),
+        Commands::Map { agent_brief } => commands::map::run(agent_brief),
         Commands::Verify {
             path,
             scenario,
@@ -176,6 +186,19 @@ mod tests {
         match cli.command {
             Commands::Init { path } => assert_eq!(path, Some(PathBuf::from("demo"))),
             other => panic!("expected init, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_command_defaults_to_orchestration() {
+        let cli = Cli::try_parse_from(["testkit", "map"]).expect("map without flags");
+        assert!(matches!(cli.command, Commands::Map { agent_brief: false }));
+
+        let cli = Cli::try_parse_from(["testkit", "map", "--agent-brief"])
+            .expect("map with agent brief");
+        match cli.command {
+            Commands::Map { agent_brief } => assert!(agent_brief),
+            other => panic!("expected map, got {other:?}"),
         }
     }
 
