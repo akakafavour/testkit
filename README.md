@@ -315,6 +315,39 @@ The honest boundary: when the target is remote, TestKit verifies *behavior*
 (status, body, latency as seen from here) and notarizes evidence you supply
 about *footprint* — it cannot read the remote host's RAM from outside.
 
+## Who it's for, and where it runs
+
+The loop is identical everywhere — `init` → declare invariants → build with your agent → `verify` → receipts → `gate`. What changes per platform is only what a "door" is called and who drives the flow. The engine stays the same five commands; the agent adapts to the environment.
+
+### Personas
+
+**The vibe-coder building a startup.** You prompt; the agent does the work. Your one irreplaceable job is signing the invariants before features get built (ten minutes, from the agent's draft) and answering when the gate blocks. The agent adds a scenario per feature, drives UI flows itself (`agent` kind), ramps load until something breaks, and cannot tell you "it's green" without a tamper-evident receipt — which is exactly what you show a client or investor who asks "how do you know it works?"
+
+**The developer on a team.** Invariants are an executable spec: written before or alongside the code, reviewed like code, versioned in git. `testkit gate --quiet` joins your pre-commit hook and CI right next to the linter; receipts are the artifact you attach to a PR. The iron rule — the agent fixes the app, never the test — is what makes a green run meaningful.
+
+**The open-source maintainer.** Gate every PR: contributors' agents must leave verified receipts before merge. Scope suites per subsystem with `--tag`, pin CI-runner budgets with envelope presets, and reference TESTKIT.md from CONTRIBUTING.md so any Claude Code / Cursor user self-governs without onboarding.
+
+### Platforms
+
+| Where | What a "door" is | What carries the testing |
+| --- | --- | --- |
+| Web / API (any stack) | HTTP routes, forms, models | `http` + `load` scenarios against local or deployed URLs; `process` for workers and migrations |
+| CLI tools | Commands, flags, exit codes, output | `process` scenarios end-to-end; whole-run CPU/RAM telemetry on long jobs |
+| Linux / self-hosted servers | Services, crons, backups, disk | Run verify on the box or in Codespaces; envelopes match the real VPS plan; `process` scenarios over `ssh`; restore drills (backup → drop → restore → assert) as scenarios; `agent` evidence captures `docker stats` |
+| Windows / macOS desktop | The binary, its exit codes, its windows | `process` scenarios for the binary; `agent` kind drives the UI with the platform's own automation; CI already builds and tests on both OSes |
+| iOS | Screens, deep links, subscriptions, local stores | `xcodebuild test` as a `process` scenario; the agent drives the simulator and notarizes screenshots; `time_jump` for trial and subscription expiry |
+| Android | Activities, intents, the app under a device-tier RAM budget | Gradle tasks as `process` scenarios; the agent drives the emulator via adb; envelopes sized to the device tier |
+
+Deep platform observation — accessibility trees, logcat, network capture — is the agent's job today, using whatever tools the environment ships and notarizing the evidence through `agent` scenarios. First-class per-platform watchers (logcat streams, XCUITest trees, Win32 UIA) are the SOURCE-OF-TRUTH §4 roadmap. The contract never changes: same scenario kinds, same receipts, same gate.
+
+### Existing project vs new project
+
+**Existing project:** `testkit init` (idempotent, zero prompts) → the agent reads the real code and drafts invariants from what exists; you sign them → `testkit map` shows which surfaces nobody tests → backfill scenarios for money, authz, and schedules first → the first `verify` run tells the truth about today (expect some red; that's the baseline, not a failure) → gate on, and regressions stop being mergeable in silence.
+
+**New project:** the strongest mode. Invariants are declared *before* code exists — `architecture.md` becomes the spec the agent builds against, and every feature lands with its own proof. The map fills in as the code does.
+
+---
+
 ## Advisory, not dogma
 
 TestKit's gates are quiet until your receipts say otherwise. A vibecoder with

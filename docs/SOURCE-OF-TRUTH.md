@@ -705,3 +705,33 @@ Every difference is a finding, not a failure. The disagreement loop is the colla
 ### What the Map Feeds
 
 The map is an accelerator, never a requirement — TestKit verifies fully without it. When it exists, it becomes the fuel for the combinatorial scenario engine (§8): every agreed surface is a candidate scenario, every surface with no scenario watching it is a coverage gap, and the state-machine synthesis reads the map instead of re-reading the code.
+
+---
+
+## 14. Personas & Platforms: One Contract, Every Environment
+
+The scenario kinds, the receipts, and the gate are fixed. Everything else is translation: what a "door" is called, and which environment tools the agent uses to drive it. This is the adapter principle (§13) applied to the whole product — the engine ships five commands, and the agent fulfills them anywhere.
+
+| Surface | What a "door" is | Primary scenario kinds | Deep observation (roadmap, §4) |
+|---|---|---|---|
+| Web / API (any stack) | HTTP routes, forms, models | `http`, `load`, `process` | CDP/HAR capture, DB WAL tails |
+| CLI tools | Commands, flags, exit codes | `process` | Structured stdout streaming |
+| Linux / self-hosted servers | Services, crons, backups, disk | `process`, `agent`, `load` | docker stats, journald |
+| Windows / macOS desktop | Binaries, exit codes, windows | `process`, `agent` | Win32 UIA / macOS AX trees |
+| iOS | Screens, deep links, subscriptions | `process`, `agent` | XCUITest trees, os_log |
+| Android | Activities, intents, device budgets | `process`, `agent` | logcat, WorkManager |
+
+### Persona economics
+
+- **Vibe-coder (startup mode):** delegates ~90% to the agent — invariant drafting from the product idea, scenario authoring per feature, UI/DB flows via `agent` scenarios, load ramping to find breaking points. Owns two things: signing the invariants (the product decision) and responding when the gate blocks. The receipt ledger doubles as client-facing proof.
+- **Developer (team mode):** treats invariants as an executable specification — authored before or with the code, reviewed like code, versioned in git. Gate joins pre-commit and CI beside the linter; receipts are the PR artifact.
+- **Open-source maintainer:** gates contributor PRs with verified receipts, scopes suites with `--tag` per subsystem, pins CI budgets with envelope presets, and delegates governance through TESTKIT.md referenced from CONTRIBUTING.md.
+
+### Existing vs new projects
+
+- **Existing project:** derive-then-gate. `testkit init` grounds the repo; the agent reads the real code and drafts invariants from what exists; the map exposes untested surfaces; the first verify run establishes the honest red baseline; the gate closes it from then on.
+- **New project:** declare-then-build. Invariants exist before implementation, making it the strongest mode — the spec is written before anything exists that could bias it. Every feature lands with its own proof; the map grows with the code.
+
+### Honesty boundary
+
+Today, the "deep observation" column is the agent's job with the environment's own tools (adb, simulators, docker, ssh), notarized through `agent` scenarios into the receipt ledger. First-class per-platform watchers are §4 vision and must not be presented as shipped.
