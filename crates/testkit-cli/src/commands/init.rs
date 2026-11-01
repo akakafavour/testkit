@@ -24,9 +24,10 @@ pub fn run(path: Option<std::path::PathBuf>) -> anyhow::Result<()> {
     let report = init_project(&root)
         .with_context(|| format!("failed to initialize TestKit at {}", root.display()))?;
 
-    println!("{CHECK} Created .testkit/ structure (brain/, evidence/, receipts/, scenarios/)");
+    println!("{CHECK} Created .testkit/ structure (brain/, evidence/, receipts/, scenarios/, extractors/)");
     println!("{CHECK} Added .testkit/evidence/ and .testkit/scratch/ to .gitignore");
     println!("{CHECK} Dropped TESTKIT.md (Agent Operating Directive)");
+    println!("{CHECK} Dropped .testkit/extractors/generic-mapper.mjs (grammar-driven machine mapper)");
     println!("{CHECK} TestKit initialized. Scaffolding and agent rules in place.");
     println!("Project root: {}", report.project_root.display());
 

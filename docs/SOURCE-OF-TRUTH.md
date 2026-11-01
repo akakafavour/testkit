@@ -12,7 +12,7 @@ This document is the **target architecture**. It mixes shipped behavior with des
 
 **Shipped (Rust workspace, `crates/`):**
 - `testkit init` — deterministic `.testkit/` provisioning, `.gitignore` hygiene, `TESTKIT.md` drop.
-- `testkit map` — the two-witness semantic map orchestration: deterministic stack detection from dependency manifests (`stack.json`), machine extractor discovery and invocation (`extractor-<framework>` executables), the agent-tour brief (the universal fallback — every framework, language, and platform is mappable from day one, by the agent), map validation, and reconciliation (`agreed` / `machine_only` / `agent_only` findings written to `map.reconciliation.json`). See §13.
+- `testkit map` — the two-witness semantic map orchestration: deterministic stack detection from dependency manifests (`stack.json`), machine mapping (dedicated `extractor-<framework>` binaries when present, else the bundled **grammar-driven generic mapper** — community Tree-sitter grammars installed once by the agent, no per-framework parsers built by TestKit), the agent-tour brief (the universal fallback — every framework, language, and platform is mappable from day one, by the agent), map validation, and reconciliation (`agreed` / `machine_only` / `agent_only` findings written to `map.reconciliation.json`). See §13.
 - `testkit verify` — scenario execution with four scenario kinds: `process` (spawn a program with `TESTKIT_FAKE_NOW` injected), `http` (request with `X-Testkit-Fake-Now` header; status, body markers, negated markers, timing budget), `agent` (the operator agent drives the flow and writes declared evidence artifacts; the engine verifies and notarizes them — missing evidence blocks the receipt), and `load` (concurrent virtual users against one endpoint, gated on error rate and p95 latency). Whole-run CPU/RAM telemetry, runaway detection, evidence capture, tamper-evident receipts. Filters: `--scenario <id>`, `--tag <tag>`, `--limit <n>` for incremental ramping; per-run envelope overrides `--max-cpu` / `--max-rss-mb`; `--fail-fast`.
 - Per-service resource envelopes: each scenario can declare its own budget (frontend vs backend tracked separately), with run-level flags as fallback and hosting-plan presets (edge 128 MB, Render free 512 MB, serverless-function 1 GB, standard small-node 1.5 GB, high-throughput 8 GB). Envelopes are declared per app and per part — the engine ships no opinion about what your hosting should cost.
 - `testkit gate` — receipt ledger evaluation with 4-way verdicts (`PASSED` / `FAILED` / `NOT_PROVEN` / `BLOCKED`) and P0/HIGH blocking.
@@ -23,7 +23,7 @@ This document is the **target architecture**. It mixes shipped behavior with des
 
 **Vision, not yet implemented (do not assume it exists):**
 - The TypeScript/Node daemon architecture, live 8-layer watcher fabric (§4), and a warm semantic-map daemon.
-- Machine extractors themselves: the `testkit map` contract, discovery, and agent fallback ship, but no per-framework `extractor-*` binaries ship yet — every map is agent-authored unless a community extractor is installed.
+- Machine mapping itself: TestKit builds **no per-framework mapper binaries**. The bundled generic mapper (a grammar-driven Node script provisioned by `testkit init` into `.testkit/extractors/`) uses community Tree-sitter grammars — the agent installs `web-tree-sitter` + `tree-sitter-wasms` once — plus built-in per-framework convention rules (Next.js and Nuxt via file-system scanning, Express/FastAPI/Flask/Actix via grammar queries). It has not been exercised end-to-end yet; dedicated `extractor-*` binaries remain open for optimization, and grammar coverage grows with the ecosystem.
 - AST feature extraction at scale, state-machine synthesis, and the combinatorial scenario engine (§8) — the map contract is its foundation; the generator is not built.
 - Automatic breaking-point search across envelopes, distributed/multi-node load generation, and baseline regression comparison across receipts.
 - Compute tiers A/B/C, remote runners, and hybrid split execution (§6) — remote targets work today only as plain scenario URLs and `ssh` process scenarios, without remote telemetry.
@@ -684,7 +684,7 @@ TestKit does not ship hardcoded support for 50 environments. TestKit ships a sma
 | File | Author | What it is |
 |---|---|---|
 | `stack.json` | The engine | Deterministic stack detection from dependency manifests, recording *what it detected from*. Never the agent's guess. |
-| `map.machine.json` | A machine extractor (`extractor-<framework>`) | The fast, literal witness: parses the repo by framework convention and emits nodes, edges, and a mandatory blind-spot report. |
+| `map.machine.json` | The bundled generic mapper or a dedicated `extractor-<framework>` | The fast, literal witness: grammar-driven parsing (community Tree-sitter grammars; the agent installs `web-tree-sitter` + `tree-sitter-wasms` once) plus per-framework convention rules, emitting nodes, edges, and a mandatory blind-spot report. |
 | `map.agent.json` | The agent's own tour | The attentive witness: walks the codebase independently — every route, handler, screen, command, model, button, and connection — without reading the machine map. |
 
 Reconciliation (`map.reconciliation.json`) compares them:
@@ -700,7 +700,7 @@ Every difference is a finding, not a failure. The disagreement loop is the colla
 1. Every map carries its author (`machine { extractor, version }` or `agent`) — provenance is part of the artifact.
 2. Every map carries `coverage`: files scanned, files parsed, and every unreadable path with a reason. A silent miss violates the contract.
 3. The agent never reads, corrects, or copies the machine map while drawing its own. Two witnesses that compare notes stop being independent.
-4. Machine extractors are pluggable executables with one versioned schema — the engine grows no framework list, the ecosystem does. Until an extractor exists for a stack, the agent *is* the mapper: every framework works from day one.
+4. Machine mapping is grammar-driven: TestKit builds no parsers. The community maintains Tree-sitter grammars per language (the agent installs `web-tree-sitter` + `tree-sitter-wasms` once); TestKit's bundled generic mapper applies per-framework convention rules on top; dedicated `extractor-*` executables remain an optimization path. Until a grammar is installed for the stack, the agent *is* the mapper: every framework works from day one.
 
 ### What the Map Feeds
 

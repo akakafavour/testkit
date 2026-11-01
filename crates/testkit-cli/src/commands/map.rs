@@ -62,8 +62,12 @@ pub fn run(agent_brief: bool) -> Result<()> {
         stack.detected_from.join(", ")
     );
 
-    // 2. Machine map, when a matching extractor exists.
-    let machine_map = run_machine_mapper(&root, &stack)?;
+    // 2. Machine map: dedicated extractor binaries first, then the bundled
+    //    grammar-driven mapper, then the agent.
+    let mut machine_map = run_machine_mapper(&root, &stack)?;
+    if machine_map.is_none() {
+        machine_map = run_generic_mapper(&root);
+    }
     match &machine_map {
         Some(map) => {
             let path = brain.join("map.machine.json");
@@ -81,9 +85,12 @@ pub fn run(agent_brief: bool) -> Result<()> {
         }
         None => {
             println!(
-                "No machine mapper installed for this stack. The agent is the mapper: \
-                 run `testkit map --agent-brief`, follow the tour, and write \
-                 .testkit/brain/map.agent.json."
+                "No machine map was produced. Two ways to fix that:\n\
+                 1. Grammar-driven (preferred): the agent installs the Tree-sitter grammar\n\
+                    once for this project — `npm install --save-dev web-tree-sitter tree-sitter-wasms`\n\
+                    — then re-runs `testkit map` to drive .testkit/extractors/generic-mapper.mjs.\n\
+                 2. Agent-authored: run `testkit map --agent-brief`, follow the tour, and\n\
+                    write .testkit/brain/map.agent.json."
             );
         }
     }
@@ -171,6 +178,43 @@ fn run_machine_mapper(
         }
     }
     Ok(None)
+}
+
+/// Try the bundled grammar-driven mapper (`testkit init` drops it into
+/// `.testkit/extractors/`). TestKit builds no per-framework parsers: the
+/// community's Tree-sitter grammars do the parsing (the agent installs
+/// `web-tree-sitter` + `tree-sitter-wasms` once), this script applies the
+/// per-framework convention rules and emits the map. Any failure here is
+/// advisory — the agent fallback keeps mapping available for every stack.
+fn run_generic_mapper(root: &Path) -> Option<SemanticMap> {
+    let script = root
+        .join(".testkit")
+        .join("extractors")
+        .join("generic-mapper.mjs");
+    if !script.is_file() {
+        return None;
+    }
+    let output = match Command::new("node").arg(&script).arg("--root").arg(root).output() {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("Generic mapper not run (is node on PATH?): {error}");
+            return None;
+        }
+    };
+    if !output.status.success() {
+        eprintln!(
+            "Generic mapper could not map this stack:\n{}",
+            String::from_utf8_lossy(&output.stderr).trim_end()
+        );
+        return None;
+    }
+    match SemanticMap::from_json(&String::from_utf8_lossy(&output.stdout)) {
+        Ok(map) => Some(map),
+        Err(error) => {
+            eprintln!("Generic mapper emitted an invalid map: {error}");
+            None
+        }
+    }
 }
 
 /// Validate both maps and write the reconciliation artifact.

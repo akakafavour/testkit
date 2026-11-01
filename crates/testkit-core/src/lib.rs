@@ -29,6 +29,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const TESTKIT_TEMPLATE: &str = include_str!("../../../templates/TESTKIT.md");
 
+const GENERIC_MAPPER: &str = include_str!("../../../templates/generic-mapper.mjs");
+
 const GITIGNORE_ENTRIES: [&str; 2] = [".testkit/evidence/", ".testkit/scratch/"];
 
 const WORK_DIRS: [&str; 4] = ["brain", "evidence", "receipts", "scenarios"];
@@ -66,6 +68,18 @@ pub fn init_project(project_root: &Path) -> anyhow::Result<InitReport> {
             .with_context(|| format!("writing {}", testkit_md.display()))?;
         true
     };
+
+    // The grammar-driven machine mapper ships with init: no per-framework
+    // binaries are built; the agent installs the Tree-sitter grammar once and
+    // `testkit map` runs this script.
+    let extractors = base.join("extractors");
+    create_dir(&extractors, &mut created)?;
+    let mapper_path = extractors.join("generic-mapper.mjs");
+    if !mapper_path.exists() {
+        std::fs::write(&mapper_path, GENERIC_MAPPER)
+            .with_context(|| format!("writing {}", mapper_path.display()))?;
+        created.push(mapper_path);
+    }
 
     let gitignore_updated = evidence::ensure_gitignore(project_root, &GITIGNORE_ENTRIES)?;
 
