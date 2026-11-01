@@ -315,6 +315,58 @@ The honest boundary: when the target is remote, TestKit verifies *behavior*
 (status, body, latency as seen from here) and notarizes evidence you supply
 about *footprint* — it cannot read the remote host's RAM from outside.
 
+## How it's used, case by case
+
+The five commands never change: `init → map → verify → gate → receipt`. What changes in each situation below is what a "door" is called and who drives the flow.
+
+### Vibe-coder building a startup
+
+Day zero: `testkit init`, then the agent drafts invariants from your idea — "signup works, trial expires after 14 days, a payment never double-bills, the landing page holds a launch spike under 500ms p95" — and you sign them. From then on, every feature the agent builds lands with a scenario: `http` for the endpoint, `agent` for the UI flow (the agent drives the browser and notarizes the transcript), `load` before launch. Your jobs are the ten-minute invariant sign-off and answering when the gate blocks. The payoff: the agent cannot tell you "it's green" without tamper-evident proof, and the receipt ledger is what you show a client or investor who asks how you know it works.
+
+### A developer on a team
+
+Invariants are an executable specification. You write or review them like code; they live in git; the gate sits in pre-commit and CI next to your linter. A PR without a green receipt is not mergeable, and the map's reconciliation flags endpoints nobody wrote a scenario for — in review, "where's the receipt" replaces "trust me." The iron rule keeps it honest: the agent fixes the application, never the test.
+
+### An open-source project
+
+TESTKIT.md goes into the repo, CONTRIBUTING.md points to it, and the gate runs on every PR: contributors' coding agents must leave verified receipts before merge. `--tag` scopes suites per subsystem (parser, CLI, server), envelope presets pin CI-runner budgets, and visiting agents — Claude Code, Cursor, whatever — self-govern without onboarding, because the manual is standing in the repo.
+
+### iOS
+
+`testkit init` in the Xcode project. Invariants read like product truths: "expired subscription shows the paywall," "the app holds under 200MB after ten minutes," "the deep link opens checkout." `xcodebuild test` runs as a `process` scenario with exit-code and duration budgets; the agent drives the simulator itself and notarizes screenshots and transcripts as `agent` evidence; `time_jump` fast-forwards subscription and trial expiry instead of waiting weeks. Receipts record which simulator and OS version produced the proof.
+
+### Android
+
+The same shape: Gradle tasks as `process` scenarios, the agent driving the emulator via adb and notarizing screenshots plus logcat excerpts. Envelopes are sized to the device tier your users actually have — a low-end phone's RAM is the budget, not your laptop's. Background-kill and rotation flows are `agent` scenarios; WorkManager and billing crons get `time_jump` cases.
+
+### Windows
+
+`process` scenarios run the `.exe`: exit codes, stdout/stderr markers, duration budgets, CPU/RAM telemetry while it runs. Installer and upgrade flows become scenarios (install old → upgrade → assert settings survive). The agent drives the UI with the platform's automation where available and notarizes what it did. The CI matrix already builds and tests on Windows, so receipts prove Windows behavior from the first PR.
+
+### macOS
+
+Mirrors Windows: `process` scenarios over the binary, the agent driving the UI with the platform's automation, the CI matrix proving macOS behavior per push. Receipts record the macOS version; notarization of the app is your release step, notarization of behavior is TestKit's.
+
+### A CLI tool
+
+The purest fit: every command is a `process` scenario. Exit code, output markers, duration budget — the whole surface is testable without a single driver. Long jobs get whole-run telemetry (memory creep in a 10-minute batch is a finding, not a mystery), `time_jump` covers license and trial expiry inside the tool itself, and the ship gate blocks a release whenever a P0 receipt is open.
+
+### Linux & self-hosted servers
+
+Run `testkit verify` on the box itself (or in Codespaces against it). Envelopes match the real machine's RAM and CPU — the $6 VPS budget, not your workstation. `http` scenarios hit the local endpoints, `process` scenarios run over `ssh` for other boxes, and Docker's `--memory` cap simulates smaller hosts while `agent` evidence captures `docker stats` beside the load receipt. Backup discipline becomes scenarios: dump → drop → restore → assert the data survived — because a backup never restore-tested is `NOT_PROVEN`.
+
+### An already-existing project
+
+Derive, then gate. `testkit init` is idempotent and prompts nothing. The agent reads the real code and drafts invariants from what exists — anything surprising it finds (undeclared failure states, missing authorization checks) becomes an invariant immediately. `testkit map` shows which surfaces nobody tests; backfill scenarios for money, authz, and schedules first. The first `verify` run tells the truth about today — expect some red; that red is the baseline, not a failure of TestKit. Then the gate closes, and regressions stop being mergeable in silence.
+
+### A brand-new project
+
+The strongest mode: invariants are declared *before* code exists. `architecture.md` becomes the spec the agent builds against, so expectations predate the implementation and self-grading is impossible from day one. Every feature lands with its own proof, and the map fills in as the code does.
+
+### A self-hosted product your users deploy
+
+Ship a verify profile with the product. Your users run `testkit init && testkit verify` on their own hardware before and after install: health scenarios assert the deploy works on *their* box, envelopes auto-size to *their* hardware, and the upgrade drill (backup → upgrade → verify → roll back if red) is scripted. When they file a bug, the receipt comes attached — proof of the failure on their hardware, not a screenshot.
+
 ## Advisory, not dogma
 
 TestKit's gates are quiet until your receipts say otherwise. A vibecoder with

@@ -705,3 +705,48 @@ Every difference is a finding, not a failure. The disagreement loop is the colla
 ### What the Map Feeds
 
 The map is an accelerator, never a requirement — TestKit verifies fully without it. When it exists, it becomes the fuel for the combinatorial scenario engine (§8): every agreed surface is a candidate scenario, every surface with no scenario watching it is a coverage gap, and the state-machine synthesis reads the map instead of re-reading the code.
+
+---
+
+## 14. How It Is Used, Case by Case
+
+The engine is five commands (`init`, `map`, `verify`, `gate`, `receipt`), constant on every surface. Per case, only two variables change: what a "door" is called, and who drives the flow. Each case below names the primary scenario kinds and the division of labor between engine and agent.
+
+### Vibe-coder building a startup
+Agent-authored invariants from the product idea, signed by the founder before features exist. Per feature: `http` scenarios for endpoints, `agent` scenarios for UI flows, `load` before launch. Engine duties: receipts, gate, telemetry. Agent duties: drafting, driving, fixing. The ledger is client-facing proof.
+
+### Developer on a team
+Invariants as an executable specification, versioned in git. Gate in pre-commit and CI; PRs merge only with green receipts. Map reconciliation surfaces coverage gaps in review. Iron rule: the agent fixes application code, never a test or invariant.
+
+### Open-source project
+TESTKIT.md referenced from CONTRIBUTING.md; `testkit gate` on every PR so contributors' agents self-govern. `--tag` scopes per subsystem; envelope presets pin CI budgets; receipts replace trust in review.
+
+### iOS
+Doors: screens, deep links, subscriptions, local stores. `xcodebuild test` as a `process` scenario (exit code, duration, telemetry); the agent drives the simulator and notarizes screenshots/transcripts as `agent` evidence; `time_jump` exercises subscription and trial expiry. Receipts record simulator and OS version.
+
+### Android
+Doors: activities, intents, device-tier budgets. Gradle tasks as `process` scenarios; the agent drives the emulator via adb and notarizes screenshots plus logcat excerpts; envelopes sized to the low-end device tier; background-kill, rotation, and WorkManager cases via `agent` scenarios and `time_jump`.
+
+### Windows
+Doors: the binary, exit codes, windows. `process` scenarios over the `.exe` with stdout/stderr markers and telemetry; installer and upgrade drills as scenarios; UI via `agent` scenarios with platform automation; the CI matrix proves Windows per push.
+
+### macOS
+Mirrors Windows: `process` scenarios over the binary, `agent` scenarios for the UI, CI matrix per push, receipts recording the macOS version.
+
+### CLI tool
+Doors: commands, flags, exit codes, output. Entirely `process` scenarios; whole-run telemetry catches memory creep in long jobs; `time_jump` covers license/trial expiry in the tool; the ship gate blocks releases with open P0 receipts.
+
+### Linux & self-hosted servers
+Doors: services, crons, backups, disk. Verify runs on the box or in Codespaces; envelopes match the real machine; `process` scenarios over `ssh`; Docker `--memory` caps simulate smaller hosts with `agent` evidence of `docker stats`; restore drills (dump → drop → restore → assert) are scenarios — an unrestored backup is `NOT_PROVEN`.
+
+### Already-existing project
+Derive-then-gate: `testkit init` (idempotent), the agent drafts invariants from the real code (surprising findings become invariants), `testkit map` exposes untested surfaces, scenarios are backfilled for money/authz/schedules first, the first `verify` run establishes the honest red baseline, then the gate closes.
+
+### Brand-new project
+Declare-then-build: invariants exist before implementation, so the specification cannot be biased by the code it grades. Every feature lands with its proof; the map grows with the code. The strongest mode.
+
+### Self-hosted product (users deploy it)
+Ship a verify profile with the product: users run `testkit init && testkit verify` on their own hardware before and after install; health scenarios assert the deploy; envelopes auto-size to their hardware; the upgrade drill (backup → upgrade → verify → rollback if red) is scripted; bug reports arrive with receipts proving the failure on the reporter's hardware.
+
+### Honesty boundary
+Deep per-platform observation (accessibility trees, logcat, UIA, network capture) is the agent's job today, using each environment's own tools and notarizing evidence through `agent` scenarios. First-class per-platform watchers remain §4 vision and must not be presented as shipped.
